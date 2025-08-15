@@ -201,12 +201,30 @@ jobs:
         
       - name: Compile to executable
         run: |
-          # Compile the script
-          .\Ahk2Exe\Ahk2Exe.exe /in AEMultibox.ahk /out AEMultibox.exe /base AutoHotkeyU64.exe /compress 1
+          # Compile the script using Ahk2Exe with AutoHotkey v2 base
+          Write-Host "Starting compilation..."
+          
+          # Check if Ahk2Exe.exe exists
+          if (!(Test-Path "Ahk2Exe.exe")) {
+              Write-Error "Ahk2Exe.exe not found in current directory"
+              Write-Host "Files in current directory:"
+              Get-ChildItem -Name | ForEach-Object { Write-Host "  - $_" }
+              exit 1
+          }
+          
+          Write-Host "Found Ahk2Exe.exe, proceeding with compilation..."
+          
+          # Run the compiler with the v2 base file
+          & .\Ahk2Exe.exe /in AEMultibox.ahk /out AEMultibox.exe /base AutoHotkey64.exe
+          
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Compilation failed with exit code: $LASTEXITCODE"
+              exit 1
+          }
           
           if (!(Test-Path "AEMultibox.exe")) {
-            Write-Error "Compilation failed - executable not created"
-            exit 1
+              Write-Error "Compilation failed - executable not created"
+              exit 1
           }
           
           $size = (Get-Item "AEMultibox.exe").Length / 1MB
@@ -224,11 +242,29 @@ jobs:
           Copy-Item "version.txt" "dist/"
           Copy-Item "README.md" "dist/"
           
-          # Copy AEBoost files if they exist
-          if (Test-Path "AEBoost/AEBoost.exe") {
+          # Copy AEBoost files - IMPORTANT: Include AEBoost.exe
+          if (Test-Path "AEBoost") {
+              Write-Host "AEBoost folder found, copying contents..."
               New-Item -ItemType Directory -Force -Path "dist/AEBoost"
-              Copy-Item "AEBoost/*" "dist/AEBoost/" -Recurse
-              Write-Host "[OK] Included AEBoost integration"
+              
+              # Copy all AEBoost files
+              Copy-Item "AEBoost/*" "dist/AEBoost/" -Recurse -Force
+              
+              # Verify AEBoost.exe was copied
+              if (Test-Path "dist/AEBoost/AEBoost.exe") {
+                  Write-Host "[OK] AEBoost.exe included successfully"
+                  $aeboostSize = (Get-Item "dist/AEBoost/AEBoost.exe").Length / 1KB
+                  Write-Host "    AEBoost.exe size: $([math]::Round($aeboostSize, 2)) KB"
+              } else {
+                  Write-Warning "AEBoost.exe not found in AEBoost folder"
+              }
+              
+              # List all files in AEBoost folder for verification
+              Write-Host "AEBoost folder contents:"
+              Get-ChildItem "dist/AEBoost" -Name | ForEach-Object { Write-Host "    - $_" }
+          } else {
+              Write-Warning "AEBoost folder not found in repository"
+              Write-Host "Make sure AEBoost folder with AEBoost.exe is committed to the repository"
           }
           
           # Create auto-updater script if it exists
@@ -237,17 +273,63 @@ jobs:
               Write-Host "[OK] Included updater script"
           }
           
-          # Create checksums
-          $hash = Get-FileHash "dist/AEMultibox.exe" -Algorithm SHA256
-          @"
-          File: AEMultibox.exe
-          SHA256: $($hash.Hash)
-          "@ | Set-Content "dist/checksums.txt"
+          # Create checksums for all executables
+          $checksumContent = @()
+          
+          # Add main exe checksum
+          $mainHash = Get-FileHash "dist/AEMultibox.exe" -Algorithm SHA256
+          $checksumContent += "File: AEMultibox.exe"
+          $checksumContent += "SHA256: $($mainHash.Hash)"
+          $checksumContent += ""
+          
+          # Add AEBoost.exe checksum if it exists
+          if (Test-Path "dist/AEBoost/AEBoost.exe") {
+              $aeboostHash = Get-FileHash "dist/AEBoost/AEBoost.exe" -Algorithm SHA256
+              $checksumContent += "File: AEBoost/AEBoost.exe"
+              $checksumContent += "SHA256: $($aeboostHash.Hash)"
+              $checksumContent += ""
+          }
+          
+          $checksumContent -join "`n" | Set-Content "dist/checksums.txt"
+          
+          # Create README for AEBoost integration if it doesn't exist
+          if (Test-Path "dist/AEBoost/AEBoost.exe" -and !(Test-Path "dist/AEBoost/README.txt")) {
+              @"
+          AEBoost Integration
+          ===================
+          AEBoost.exe is included with permission from the original author.
+          
+          To use AEBoost with AEMultibox:
+          1. Ensure AEBoost.exe is in the AEBoost subfolder
+          2. Configure AEBoost settings in AEMultibox
+          3. AEMultibox will automatically launch and manage AEBoost
+          
+          Note: AEBoost must be in the 'AEBoost' subfolder relative to AEMultibox.exe
+          "@ | Set-Content "dist/AEBoost/README.txt"
+          }
           
           # Zip the distribution
           Compress-Archive -Path "dist/*" -DestinationPath "AEMultibox-dist.zip" -Force
           
-          Write-Host "[OK] Distribution package created"
+          # Show final package contents
+          Write-Host ""
+          Write-Host "Distribution package created with the following structure:"
+          Write-Host "AEMultibox-dist.zip"
+          Write-Host "├── AEMultibox.exe"
+          Write-Host "├── AEMultibox.ahk"
+          Write-Host "├── version.txt"
+          Write-Host "├── checksums.txt"
+          Write-Host "├── README.md"
+          if (Test-Path "dist/AEBoost/AEBoost.exe") {
+              Write-Host "└── AEBoost/"
+              Write-Host "    ├── AEBoost.exe"
+              Get-ChildItem "dist/AEBoost" -Name | Where-Object { $_ -ne "AEBoost.exe" } | ForEach-Object { 
+                  Write-Host "    ├── $_" 
+              }
+          }
+          
+          Write-Host ""
+          Write-Host "[OK] Distribution package created successfully"
         shell: powershell
         
       - name: Upload artifacts
@@ -284,14 +366,19 @@ jobs:
             "${{ github.ref_name }}"
           }
           
+          # Check if AEBoost is included
+          $aeboostIncluded = Test-Path "dist/AEBoost/AEBoost.exe"
+          
           $notes = @"
           # AEMultibox $version
           
           ## 📦 Installation
           1. Download ``AEMultibox-$version.zip``
           2. Extract to your desired location
-          3. (Optional) Place AEBoost files in the ``AEBoost`` subfolder
-          4. Run ``AEMultibox.exe`` (or ``AEMultibox.ahk`` if you have AutoHotkey v2 installed)
+          3. Run ``AEMultibox.exe`` (or ``AEMultibox.ahk`` if you have AutoHotkey v2 installed)
+          
+          ## 🚀 AEBoost Integration
+          $(if ($aeboostIncluded) { "✅ **AEBoost.exe is included** in the AEBoost subfolder (with permission from the original author)" } else { "⚠️ AEBoost.exe not included - add it manually to the AEBoost subfolder if needed" })
           
           ## 🔄 Auto-Update
           The application will automatically check for updates on startup. You can also manually check via the Settings tab.
@@ -300,20 +387,23 @@ jobs:
           - See [Changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details
           
           ## 📝 Files Included
-          - ``AEMultibox.exe`` - Compiled executable (no AutoHotkey required)
+          - ``AEMultibox.exe`` - Main application executable
           - ``AEMultibox.ahk`` - Source script (requires AutoHotkey v2)
+          $(if ($aeboostIncluded) { "- ``AEBoost/AEBoost.exe`` - AEBoost integration (included with permission)" })
           - ``updater.ahk`` - Auto-updater component (if available)
           - ``version.txt`` - Version information
-          - ``checksums.txt`` - File integrity verification
+          - ``checksums.txt`` - File integrity verification (includes checksums for all executables)
+          - ``README.md`` - Documentation
           
           ## ⚠️ Requirements
           - Windows 10/11
           - Ashen Empires game client
-          - Administrator privileges recommended for memory reading
+          - Administrator privileges recommended for memory reading and AEBoost integration
           
           ## 🛡️ Security
-          - SHA256 checksum provided in ``checksums.txt``
+          - SHA256 checksums provided in ``checksums.txt`` for all executables
           - All releases are automatically built via GitHub Actions
+          - AEBoost.exe included with explicit permission from the original author
           "@
           
           # Save to file for release
