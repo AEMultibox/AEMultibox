@@ -31,31 +31,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup AutoHotkey (v2)
+      - name: Download & setup AutoHotkey v2 (runtime + compiler)
         shell: powershell
         run: |
-          $ahkUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
-          Invoke-WebRequest -Uri $ahkUrl -OutFile "AutoHotkey.zip"
-          Expand-Archive -Path "AutoHotkey.zip" -DestinationPath "AutoHotkey"
-          Copy-Item "AutoHotkey\AutoHotkey64.exe" "AutoHotkey.exe"
+          # Download the official AutoHotkey v2 zip once
+          $ahkZipUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
+          Invoke-WebRequest -Uri $ahkZipUrl -OutFile "AutoHotkey.zip"
+          Expand-Archive -Path "AutoHotkey.zip" -DestinationPath "AutoHotkey" -Force
 
-      - name: Download Ahk2Exe compiler + base (v2)
-        shell: powershell
-        run: |
-          $ahk2exeUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.01/Ahk2Exe.exe.zip"
-          Invoke-WebRequest -Uri $ahk2exeUrl -OutFile "Ahk2Exe.zip"
-          Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "Ahk2Exe"
+          # Runtime (for /ErrorStdOut if needed)
+          Copy-Item "AutoHotkey/AutoHotkey64.exe" "AutoHotkey.exe" -Force
 
-          $baseUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
-          Invoke-WebRequest -Uri $baseUrl -OutFile "Base.zip"
-          Expand-Archive -Path "Base.zip" -DestinationPath "Base"
-          Copy-Item "Base/v2/AutoHotkeyU64.exe" "AutoHotkeyU64.exe"
+          # Locate compiler (Ahk2Exe) and v2 base (AutoHotkeyU64.exe) from the same zip
+          $ahk2exe = Get-ChildItem -Path "AutoHotkey" -Recurse -Filter "Ahk2Exe.exe" | Select-Object -First 1
+          $baseU64 = Get-ChildItem -Path "AutoHotkey" -Recurse -Filter "AutoHotkeyU64.exe" | Select-Object -First 1
+          if (-not $ahk2exe) { Write-Error "Ahk2Exe.exe not found inside AutoHotkey zip"; exit 1 }
+          if (-not $baseU64) { Write-Error "AutoHotkeyU64.exe (base) not found inside AutoHotkey zip"; exit 1 }
+          "AHK2EXE=$($ahk2exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "BASE_U64=$($baseU64.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "`u2713 Found compiler: $($ahk2exe.FullName)"
+          Write-Host "`u2713 Found base: $($baseU64.FullName)"
 
       - name: Resolve version (tag or manual) and update script
         id: version
         shell: powershell
         run: |
-          # When launched manually, GitHub exposes inputs as env: INPUT_<name>
           if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:INPUT_VERSION) {
             $version = $env:INPUT_VERSION
           } elseif ($env:GITHUB_REF -match 'refs/tags/(.+)$') {
@@ -69,7 +69,6 @@ jobs:
           "VERSION_PLAIN=$plain" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "`u2713 Version resolved: $version"
 
-          # Update version string inside AEMultibox.ahk (try a few common patterns)
           if (Test-Path "AEMultibox.ahk") {
             $content = Get-Content "AEMultibox.ahk" -Raw
             $content = $content -replace '(?m)^(\s*global\s+AppVersion\s*:=\s*")([^"]+)(")', "$1$plain$3"
@@ -82,20 +81,16 @@ jobs:
       - name: Validate by compiling (Ahk2Exe dry-run)
         shell: powershell
         run: |
-          # Use the compiler to catch syntax errors without running the script.
-          .\Ahk2Exe\Ahk2Exe.exe /in AEMultibox.ahk /out _validate_tmp.exe /base AutoHotkeyU64.exe /compress 0
+          & "$env:AHK2EXE" /in AEMultibox.ahk /out _validate_tmp.exe /base "$env:BASE_U64" /compress 0
           $code = $LASTEXITCODE
-          if ($code -ne 0) {
-            Write-Error "Syntax/compile validation failed with exit code $code"
-            exit 1
-          }
+          if ($code -ne 0) { Write-Error "Syntax/compile validation failed with exit code $code"; exit 1 }
           if (Test-Path _validate_tmp.exe) { Remove-Item _validate_tmp.exe -Force }
           Write-Host "`u2713 Syntax/compile validation passed"
 
       - name: Compile to executable (release build)
         shell: powershell
         run: |
-          .\Ahk2Exe\Ahk2Exe.exe /in AEMultibox.ahk /out AEMultibox.exe /base AutoHotkeyU64.exe /compress 1
+          & "$env:AHK2EXE" /in AEMultibox.ahk /out AEMultibox.exe /base "$env:BASE_U64" /compress 1
           if (!(Test-Path "AEMultibox.exe")) { Write-Error "Compilation failed"; exit 1 }
           $size = (Get-Item "AEMultibox.exe").Length / 1MB
           Write-Host "`u2713 Compiled AEMultibox.exe ($([math]::Round($size,2)) MB)"
@@ -107,10 +102,7 @@ jobs:
           Copy-Item AEMultibox.exe .\dist\
           Copy-Item AEMultibox.ahk .\dist\
           Copy-Item version.txt .\dist\
-          if (Test-Path .\AEBoost\AEBoost.exe) {
-            Copy-Item .\AEBoost .\dist\AEBoost -Recurse
-            Write-Host "`u2713 Included AEBoost folder"
-          }
+          if (Test-Path .\AEBoost\AEBoost.exe) { Copy-Item .\AEBoost .\dist\AEBoost -Recurse; Write-Host "`u2713 Included AEBoost folder" }
           @"
           # AEMultibox
 
