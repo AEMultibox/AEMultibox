@@ -3,7 +3,26 @@ name: Build and Release AEMultibox
 on:
   push:
     tags:
-      - "v*"
+      - 'v*.*.*'   # semantic tag pushes like v1.2.3
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.2.3). If omitted, use tag on push.'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark the release as a prerelease'
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: 'Create the GitHub Release as a draft'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -16,69 +35,80 @@ jobs:
       - name: Setup AutoHotkey (v2)
         shell: powershell
         run: |
-          $ahkUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
-          Invoke-WebRequest -Uri $ahkUrl -OutFile "AutoHotkey.zip"
-          Expand-Archive -Path "AutoHotkey.zip" -DestinationPath "AutoHotkey"
-          Copy-Item "AutoHotkey\AutoHotkey64.exe" "AutoHotkey.exe"
+          $ahkUrl = 'https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip'
+          Invoke-WebRequest -Uri $ahkUrl -OutFile 'AutoHotkey.zip'
+          Expand-Archive -Path 'AutoHotkey.zip' -DestinationPath 'AutoHotkey'
+          Copy-Item 'AutoHotkey/AutoHotkey64.exe' 'AutoHotkey.exe'
 
-      - name: Validate AHK Script Syntax
+      - name: Validate AHK Script Syntax (v2-safe)
         shell: powershell
         run: |
-          Write-Host "Validating AEMultibox.ahk syntax..."
+          Write-Host 'Validating AEMultibox.ahk syntax...'
 
           $validationScript = @"
           #Requires AutoHotkey v2.0
           #Include AEMultibox.ahk
           ExitApp(0)
           "@
+          Set-Content -Path 'validate_syntax.ahk' -Value $validationScript -Encoding UTF8
 
-          Set-Content -Path "validate_syntax.ahk" -Value $validationScript -Encoding UTF8
-
-          $ahkExe = "$PWD\AutoHotkey.exe"
+          $ahkExe = "$PWD/AutoHotkey.exe"
           & $ahkExe '/ErrorStdOut' 'validate_syntax.ahk' 1> output.txt 2> error.txt
           $exit = $LASTEXITCODE
-
           if ($exit -ne 0) {
             Write-Host "Syntax validation failed with exit code: $exit"
-            if (Test-Path "error.txt") {
-              $errorContent = Get-Content "error.txt" -Raw
+            if (Test-Path 'error.txt') {
+              $errorContent = Get-Content 'error.txt' -Raw
               if ($errorContent) { Write-Error "Syntax errors:`n$errorContent" }
             }
             exit 1
           }
-
           Write-Host "`u2713 Script syntax validation passed"
 
       - name: Download Ahk2Exe compiler
         shell: powershell
         run: |
-          $ahk2exeUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.01/Ahk2Exe.exe.zip"
-          Invoke-WebRequest -Uri $ahk2exeUrl -OutFile "Ahk2Exe.zip"
-          Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "Ahk2Exe"
+          $ahk2exeUrl = 'https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.01/Ahk2Exe.exe.zip'
+          Invoke-WebRequest -Uri $ahk2exeUrl -OutFile 'Ahk2Exe.zip'
+          Expand-Archive -Path 'Ahk2Exe.zip' -DestinationPath 'Ahk2Exe'
 
-          $baseUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
-          Invoke-WebRequest -Uri $baseUrl -OutFile "Base.zip"
-          Expand-Archive -Path "Base.zip" -DestinationPath "Base"
-          Copy-Item "Base/v2/AutoHotkeyU64.exe" "AutoHotkeyU64.exe"
+          $baseUrl = 'https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip'
+          Invoke-WebRequest -Uri $baseUrl -OutFile 'Base.zip'
+          Expand-Archive -Path 'Base.zip' -DestinationPath 'Base'
+          Copy-Item 'Base/v2/AutoHotkeyU64.exe' 'AutoHotkeyU64.exe'
 
-      - name: Determine version from tag
+      - name: Resolve version and update script
         id: version
         shell: powershell
         run: |
-          $ref = "$env:GITHUB_REF"  # refs/tags/vX.Y.Z
-          if ($ref -match 'refs/tags/(.+)$') { $version = $matches[1] } else { $version = "v0.0.0" }
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $version = 'v${{ github.event.inputs.version }}'
+          } else {
+            $version = '${{ github.ref_name }}'
+          }
           $plain = $version.TrimStart('v')
-          Set-Content "version.txt" $version
+          Set-Content 'version.txt' $version
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "VERSION_PLAIN=$plain" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "`u2713 Version resolved: $version"
+
+          # Update version inside AEMultibox.ahk if present
+          if (Test-Path 'AEMultibox.ahk') {
+            $content = Get-Content 'AEMultibox.ahk' -Raw
+            # Common patterns to update:
+            $content = $content -replace '(?m)^(\s*global\s+AppVersion\s*:=\s*")([^"]+)(")', "$1$plain$3"
+            $content = $content -replace '(?m)^(\s*AppVersion\s*:=\s*")([^"]+)(")', "$1$plain$3"
+            $content = $content -replace '(?m)^(\s*;?\s*Version\s*:?\s*")([^"]+)(")', "$1$plain$3"
+            Set-Content 'AEMultibox.ahk' $content -Encoding UTF8
+            Write-Host "`u2713 Updated AEMultibox.ahk version string to $plain"
+          }
 
       - name: Compile to executable
         shell: powershell
         run: |
           .\Ahk2Exe\Ahk2Exe.exe /in AEMultibox.ahk /out AEMultibox.exe /base AutoHotkeyU64.exe /compress 1
-          if (!(Test-Path "AEMultibox.exe")) { Write-Error "Compilation failed"; exit 1 }
-          $size = (Get-Item "AEMultibox.exe").Length / 1MB
+          if (!(Test-Path 'AEMultibox.exe')) { Write-Error 'Compilation failed'; exit 1 }
+          $size = (Get-Item 'AEMultibox.exe').Length / 1MB
           Write-Host "`u2713 Compiled AEMultibox.exe ($([math]::Round($size,2)) MB)"
 
       - name: Create distribution folder
@@ -88,7 +118,14 @@ jobs:
           Copy-Item AEMultibox.exe .\dist\
           Copy-Item AEMultibox.ahk .\dist\
           Copy-Item version.txt .\dist\
-          if (Test-Path .\aeboost\aeboost) { Copy-Item .\aeboost\aeboost .\dist\ -Recurse; Write-Host "`u2713 Included aeboost folder" }
+
+          # Include AEBoost folder (with AEBoost.exe) if present
+          if (Test-Path .\AEBoost\AEBoost.exe) {
+            New-Item -ItemType Directory -Force -Path .\dist\AEBoost | Out-Null
+            Copy-Item .\AEBoost\* .\dist\AEBoost\ -Recurse
+            Write-Host "`u2713 Included AEBoost folder and AEBoost.exe"
+          }
+
           @"
           # AEMultibox
 
@@ -100,7 +137,7 @@ jobs:
           - AEMultibox.exe
           - AEMultibox.ahk
           - version.txt
-          - (optional) aeboost folder
+          - (optional) AEBoost/AEBoost.exe
           "@ | Set-Content .\dist\README.txt -Encoding UTF8
           Write-Host "`u2713 Distribution folder prepared"
 
@@ -110,11 +147,11 @@ jobs:
           $zipName = "AEMultibox-$env:VERSION.zip"
           if (Test-Path $zipName) { Remove-Item $zipName -Force }
           Compress-Archive -Path .\dist\* -DestinationPath $zipName
-          if (!(Test-Path $zipName)) { Write-Error "Zip creation failed"; exit 1 }
+          if (!(Test-Path $zipName)) { Write-Error 'Zip creation failed'; exit 1 }
           "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "`u2713 Created $zipName"
 
-      - name: Generate latest.json for updater
+      - name: Generate latest.json for in-app updater
         shell: powershell
         run: |
           $artifactName = $env:ZIP_NAME
@@ -136,7 +173,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ${{ env.ZIP_NAME }}
+            ${{ env:ZIP_NAME }}
             latest.json
+          generate_release_notes: true
+          draft: ${{ github.event.inputs.draft || false }}
+          prerelease: ${{ github.event.inputs.prerelease || false }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
