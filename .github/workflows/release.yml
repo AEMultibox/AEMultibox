@@ -89,16 +89,52 @@ jobs:
         
       - name: Setup AutoHotkey Compiler
         run: |
-          # Download Ahk2Exe compiler
-          $ahkUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/latest/download/Ahk2Exe.zip"
-          Invoke-WebRequest -Uri $ahkUrl -OutFile "Ahk2Exe.zip"
-          Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "Ahk2Exe"
+          # Download Ahk2Exe compiler - using specific version
+          $ahkUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.02/Ahk2Exe.zip"
+          
+          try {
+              Invoke-WebRequest -Uri $ahkUrl -OutFile "Ahk2Exe.zip"
+          } catch {
+              Write-Host "Failed to download from specific version, trying alternative..."
+              # Alternative: Download from AutoHotkey main release which includes compiler
+              $altUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
+              Invoke-WebRequest -Uri $altUrl -OutFile "AutoHotkey_Full.zip"
+              Expand-Archive -Path "AutoHotkey_Full.zip" -DestinationPath "AutoHotkey_Full"
+              
+              # The v2 package includes Compiler directory
+              if (Test-Path "AutoHotkey_Full\Compiler\Ahk2Exe.exe") {
+                  New-Item -ItemType Directory -Force -Path "Ahk2Exe"
+                  Copy-Item "AutoHotkey_Full\Compiler\*" "Ahk2Exe\" -Recurse
+              } else {
+                  Write-Error "Compiler not found in AutoHotkey package"
+                  exit 1
+              }
+          }
+          
+          if (Test-Path "Ahk2Exe.zip") {
+              Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "Ahk2Exe"
+          }
           
           # Download AutoHotkey v2 base file from GitHub
           $baseUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
           Invoke-WebRequest -Uri $baseUrl -OutFile "AutoHotkeyBase.zip"
           Expand-Archive -Path "AutoHotkeyBase.zip" -DestinationPath "AutoHotkeyBase"
-          Copy-Item "AutoHotkeyBase\AutoHotkey64.exe" "AutoHotkeyU64.exe"
+          
+          # Copy base executable for compilation
+          if (Test-Path "AutoHotkeyBase\AutoHotkey64.exe") {
+              Copy-Item "AutoHotkeyBase\AutoHotkey64.exe" "AutoHotkeyU64.exe"
+          } else {
+              Write-Error "AutoHotkey base executable not found"
+              exit 1
+          }
+          
+          # Verify compiler exists
+          if (!(Test-Path "Ahk2Exe\Ahk2Exe.exe")) {
+              Write-Error "Ahk2Exe.exe not found after extraction"
+              exit 1
+          }
+          
+          Write-Host "[OK] AutoHotkey compiler setup complete"
         shell: powershell
         
       - name: Update version in script
