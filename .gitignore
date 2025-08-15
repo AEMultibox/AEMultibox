@@ -1,6 +1,6 @@
-# Compiled executables (except AEBoost which we have permission to include)
-*.exe
-!AEBoost/AEBoost.exe
+# Only ignore compiled AEMultibox.exe (built by GitHub Actions)
+# Keep AEBoost.exe since we have permission and it's required
+AEMultibox.exe
 
 # Build and distribution folders
 /dist/
