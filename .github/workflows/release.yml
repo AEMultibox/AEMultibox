@@ -4,6 +4,24 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number (e.g. v1.2.3)"
+        required: false
+      prerelease:
+        description: "Mark as prerelease"
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: "Mark release as draft"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -25,28 +43,21 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Validating AEMultibox.ahk syntax..."
-
           $validationScript = @"
           #Requires AutoHotkey v2.0
           #Include AEMultibox.ahk
           ExitApp(0)
           "@
-
           Set-Content -Path "validate_syntax.ahk" -Value $validationScript -Encoding UTF8
-
           $ahkExe = "$PWD\AutoHotkey.exe"
           & $ahkExe '/ErrorStdOut' 'validate_syntax.ahk' 1> output.txt 2> error.txt
-          $exit = $LASTEXITCODE
-
-          if ($exit -ne 0) {
-            Write-Host "Syntax validation failed with exit code: $exit"
+          if ($LASTEXITCODE -ne 0) {
             if (Test-Path "error.txt") {
               $errorContent = Get-Content "error.txt" -Raw
               if ($errorContent) { Write-Error "Syntax errors:`n$errorContent" }
             }
             exit 1
           }
-
           Write-Host "`u2713 Script syntax validation passed"
 
       - name: Download Ahk2Exe compiler
@@ -55,29 +66,31 @@ jobs:
           $ahk2exeUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.01/Ahk2Exe.exe.zip"
           Invoke-WebRequest -Uri $ahk2exeUrl -OutFile "Ahk2Exe.zip"
           Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "Ahk2Exe"
-
           $baseUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
           Invoke-WebRequest -Uri $baseUrl -OutFile "Base.zip"
           Expand-Archive -Path "Base.zip" -DestinationPath "Base"
           Copy-Item "Base/v2/AutoHotkeyU64.exe" "AutoHotkeyU64.exe"
 
-      - name: Determine version from tag and update script
+      - name: Determine version from tag or manual input and update script
         id: version
         shell: powershell
         run: |
-          $ref = "$env:GITHUB_REF"  # refs/tags/vX.Y.Z
-          if ($ref -match 'refs/tags/(.+)$') { $version = $matches[1] } else { $version = "v0.0.0" }
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:INPUT_VERSION) {
+            $version = $env:INPUT_VERSION
+          } elseif ($env:GITHUB_REF -match 'refs/tags/(.+)$') {
+            $version = $matches[1]
+          } else {
+            $version = "v0.0.0"
+          }
           $plain = $version.TrimStart('v')
           Set-Content "version.txt" $version
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "VERSION_PLAIN=$plain" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "`u2713 Version resolved: $version"
-
           if (Test-Path "AEMultibox.ahk") {
             $content = Get-Content "AEMultibox.ahk" -Raw
             $content = $content -replace '(?m)^(\s*global\s+AppVersion\s*:=\s*")([^"]+)(")', "$1$plain$3"
             $content = $content -replace '(?m)^(\s*AppVersion\s*:=\s*")([^"]+)(")', "$1$plain$3"
-            $content = $content -replace '(?m)^(\s*;?\s*Version\s*:?\s*")([^"]+)(")', "$1$plain$3"
+            $content = $content -replace '(?m)^(\s*;?\s*Version\s*:?")([^"]+)(")', "$1$plain$3"
             Set-Content "AEMultibox.ahk" $content -Encoding UTF8
             Write-Host "`u2713 Updated AEMultibox.ahk version string to $plain"
           }
@@ -147,5 +160,7 @@ jobs:
           files: |
             ${{ env.ZIP_NAME }}
             latest.json
+          prerelease: ${{ github.event.inputs.prerelease }}
+          draft: ${{ github.event.inputs.draft }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
