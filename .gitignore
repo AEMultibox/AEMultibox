@@ -45,9 +45,17 @@ config.local.ini
 settings.local.json
 
 # Auto-generated files from builds
-version.txt
 latest.json
 checksums.txt
+
+# AutoHotkey compiler artifacts
+*.exe.bak
+Ahk2Exe.exe
+BinMod.exe
+AutoHotkey*.exe
+AutoHotkey*.zip
+Ahk2Exe*.zip
+compile_*.txt
 
 # GitHub Actions workflow files are always included
 !.github/
