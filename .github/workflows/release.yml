@@ -31,29 +31,64 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install AutoHotkey v2 locally (silent)
+      - name: Install AutoHotkey v2 (robust: retries + winget fallback)
         shell: powershell
         run: |
+          $ErrorActionPreference = 'Stop'
           $version = '2.0.18'
-          $setupUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v$version/AutoHotkey_$version_setup.exe"
-          Invoke-WebRequest -Uri $setupUrl -OutFile "AutoHotkeySetup.exe"
-
-          # Install to a writable folder in the workspace (no admin needed)
           $installDir = Join-Path $PWD 'ahk'
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
-          Start-Process -FilePath .\AutoHotkeySetup.exe -ArgumentList "/SILENT","/NORESTART","/DIR=$installDir" -Wait
+          function Download-WithRetry($url, $out, $attempts = 6) {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) GitHubActions'
+            for ($i=1; $i -le $attempts; $i++) {
+              try {
+                Write-Host "Attempt $i/$attempts: iwr $url"
+                Invoke-WebRequest -Uri $url -OutFile $out -Headers @{ 'User-Agent' = $ua } -TimeoutSec 120
+                if ((Test-Path $out) -and ((Get-Item $out).Length -gt 1000000)) { return $true }
+                throw "Downloaded file too small or missing: $out"
+              } catch {
+                Write-Host "iwr failed: $($_.Exception.Message)"
+                if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                  Write-Host "Trying curl fallback..."
+                  & curl.exe -L "$url" -o "$out" --retry 5 --retry-delay 2
+                  if ((Test-Path $out) -and ((Get-Item $out).Length -gt 1000000)) { return $true }
+                }
+                if ($i -lt $attempts) { Start-Sleep -Seconds ([int][math]::Min(60, [math]::Pow(2, $i))) } else { return $false }
+              }
+            }
+            return $false
+          }
+
+          $setupUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v$version/AutoHotkey_${version}_setup.exe"
+          $setupExe = Join-Path $PWD 'AutoHotkeySetup.exe'
+
+          $ok = Download-WithRetry $setupUrl $setupExe
+
+          if (-not $ok) {
+            Write-Host "Primary download failed. Trying winget fallback..."
+            if (Get-Command winget -ErrorAction SilentlyContinue) {
+              winget install --exact --silent --accept-package-agreements --accept-source-agreements --location "$installDir" AutoHotkey.AutoHotkey --version $version || $null
+            } else {
+              Write-Host "winget not available on runner."
+            }
+          } else {
+            Write-Host "Running silent installer to $installDir"
+            Start-Process -FilePath $setupExe -ArgumentList "/SILENT","/NORESTART","/DIR=$installDir" -Wait
+          }
 
           $ahk2exe = Join-Path $installDir 'Compiler\Ahk2Exe.exe'
           $baseU64 = Join-Path $installDir 'AutoHotkeyU64.exe'
-          if (!(Test-Path $ahk2exe)) { Write-Error "Ahk2Exe.exe not found at $ahk2exe"; exit 1 }
-          if (!(Test-Path $baseU64)) { Write-Error "AutoHotkeyU64.exe not found at $baseU64"; exit 1 }
+
+          if (!(Test-Path $ahk2exe) -or !(Test-Path $baseU64)) {
+            Write-Error "AutoHotkey install incomplete. Expected: $ahk2exe and $baseU64"
+            exit 1
+          }
 
           "AHK2EXE=$ahk2exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "BASE_U64=$baseU64" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "`u2713 Installed AutoHotkey v$version to $installDir"
-          Write-Host "`u2713 Found compiler: $ahk2exe"
-          Write-Host "`u2713 Found base: $baseU64"
+          Write-Host "`u2713 AHK v$version installed. Compiler and base located."
 
       - name: Resolve version (tag or manual) and update script
         id: version
