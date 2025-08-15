@@ -214,12 +214,29 @@ jobs:
           
           Write-Host "Found Ahk2Exe.exe, proceeding with compilation..."
           
-          # Run the compiler with the v2 base file and capture output
-          $process = Start-Process -FilePath ".\Ahk2Exe.exe" `
-              -ArgumentList "/in", "AEMultibox.ahk", "/out", "AEMultibox.exe", "/base", "AutoHotkey64.exe" `
-              -Wait -PassThru -NoNewWindow `
-              -RedirectStandardOutput "compile_output.txt" `
-              -RedirectStandardError "compile_error.txt"
+          # Check if icon file exists
+          $iconParam = ""
+          if (Test-Path "AEMultibox.ico") {
+              Write-Host "Found AEMultibox.ico - will use as executable icon"
+              $iconParam = "/icon"
+          } else {
+              Write-Host "AEMultibox.ico not found - using default icon"
+          }
+          
+          # Run the compiler with the v2 base file and icon (if available)
+          if ($iconParam) {
+              $process = Start-Process -FilePath ".\Ahk2Exe.exe" `
+                  -ArgumentList "/in", "AEMultibox.ahk", "/out", "AEMultibox.exe", "/base", "AutoHotkey64.exe", "/icon", "AEMultibox.ico" `
+                  -Wait -PassThru -NoNewWindow `
+                  -RedirectStandardOutput "compile_output.txt" `
+                  -RedirectStandardError "compile_error.txt"
+          } else {
+              $process = Start-Process -FilePath ".\Ahk2Exe.exe" `
+                  -ArgumentList "/in", "AEMultibox.ahk", "/out", "AEMultibox.exe", "/base", "AutoHotkey64.exe" `
+                  -Wait -PassThru -NoNewWindow `
+                  -RedirectStandardOutput "compile_output.txt" `
+                  -RedirectStandardError "compile_error.txt"
+          }
           
           # Read output for debugging
           if (Test-Path "compile_output.txt") {
@@ -251,6 +268,9 @@ jobs:
           
           $sizeMB = $size / 1MB
           Write-Host "[OK] Successfully compiled AEMultibox.exe (Size: $([math]::Round($sizeMB, 2)) MB)"
+          if (Test-Path "AEMultibox.ico") {
+              Write-Host "[OK] Icon embedded: AEMultibox.ico"
+          }
           
           # Clean up temp files
           Remove-Item "compile_output.txt" -ErrorAction SilentlyContinue
