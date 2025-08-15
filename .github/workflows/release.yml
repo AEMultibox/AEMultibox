@@ -60,7 +60,7 @@ jobs:
             exit 1
           }
           
-          Write-Host "✓ Script syntax validation passed"
+          Write-Host "[OK] Script syntax validation passed"
         shell: powershell
         
       - name: Check for required files
@@ -76,7 +76,7 @@ jobs:
               exit 1
             }
           }
-          Write-Host "✓ All required files present"
+          Write-Host "[OK] All required files present"
         shell: powershell
 
   build:
@@ -132,7 +132,7 @@ jobs:
           }
           
           $size = (Get-Item "AEMultibox.exe").Length / 1MB
-          Write-Host "✓ Successfully compiled AEMultibox.exe (Size: $([math]::Round($size, 2)) MB)"
+          Write-Host "[OK] Successfully compiled AEMultibox.exe (Size: $([math]::Round($size, 2)) MB)"
         shell: powershell
         
       - name: Create distribution package
@@ -150,13 +150,13 @@ jobs:
           if (Test-Path "AEBoost/AEBoost.exe") {
               New-Item -ItemType Directory -Force -Path "dist/AEBoost"
               Copy-Item "AEBoost/*" "dist/AEBoost/" -Recurse
-              Write-Host "✓ Included AEBoost integration"
+              Write-Host "[OK] Included AEBoost integration"
           }
           
           # Create auto-updater script if it exists
           if (Test-Path "updater.ahk") {
               Copy-Item "updater.ahk" "dist/"
-              Write-Host "✓ Included updater script"
+              Write-Host "[OK] Included updater script"
           }
           
           # Create checksums
@@ -169,7 +169,7 @@ jobs:
           # Zip the distribution
           Compress-Archive -Path "dist/*" -DestinationPath "AEMultibox-dist.zip" -Force
           
-          Write-Host "✓ Distribution package created"
+          Write-Host "[OK] Distribution package created"
         shell: powershell
         
       - name: Upload artifacts
@@ -277,7 +277,7 @@ jobs:
           
           Set-Content "latest.json" $latest
           
-          Write-Host "✓ Created latest.json for auto-updater"
+          Write-Host "[OK] Created latest.json for auto-updater"
         shell: powershell
         
       - name: Upload latest.json
@@ -297,10 +297,10 @@ jobs:
           if [ "${{ needs.test.result }}" == "success" ] && \
              [ "${{ needs.build.result }}" == "success" ] && \
              [ "${{ needs.release.result }}" == "success" ]; then
-            echo "✅ Release pipeline completed successfully!"
+            echo "[SUCCESS] Release pipeline completed successfully!"
             echo "Version released: ${{ github.ref_name }}"
           else
-            echo "❌ Release pipeline failed"
+            echo "[FAILED] Release pipeline failed"
             echo "Test: ${{ needs.test.result }}"
             echo "Build: ${{ needs.build.result }}"
             echo "Release: ${{ needs.release.result }}"
