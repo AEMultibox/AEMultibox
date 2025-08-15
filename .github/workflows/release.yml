@@ -9,6 +9,7 @@ on:
       version:
         description: "Version number (e.g., v1.2.3). If omitted here, use the push tag."
         required: false
+        type: string
       prerelease:
         description: "Mark as prerelease"
         required: false
