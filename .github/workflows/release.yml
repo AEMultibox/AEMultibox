@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version number (e.g. v1.2.3)"
+        description: "Version number (e.g., v1.2.3). If omitted here, use the push tag."
         required: false
       prerelease:
         description: "Mark as prerelease"
@@ -39,63 +39,60 @@ jobs:
           Expand-Archive -Path "AutoHotkey.zip" -DestinationPath "AutoHotkey"
           Copy-Item "AutoHotkey\AutoHotkey64.exe" "AutoHotkey.exe"
 
-      - name: Validate AHK Script Syntax
-        shell: powershell
-        run: |
-          Write-Host "Validating AEMultibox.ahk syntax..."
-          $validationScript = @"
-          #Requires AutoHotkey v2.0
-          #Include AEMultibox.ahk
-          ExitApp(0)
-          "@
-          Set-Content -Path "validate_syntax.ahk" -Value $validationScript -Encoding UTF8
-          $ahkExe = "$PWD\AutoHotkey.exe"
-          & $ahkExe '/ErrorStdOut' 'validate_syntax.ahk' 1> output.txt 2> error.txt
-          if ($LASTEXITCODE -ne 0) {
-            if (Test-Path "error.txt") {
-              $errorContent = Get-Content "error.txt" -Raw
-              if ($errorContent) { Write-Error "Syntax errors:`n$errorContent" }
-            }
-            exit 1
-          }
-          Write-Host "`u2713 Script syntax validation passed"
-
-      - name: Download Ahk2Exe compiler
+      - name: Download Ahk2Exe compiler + base (v2)
         shell: powershell
         run: |
           $ahk2exeUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.01/Ahk2Exe.exe.zip"
           Invoke-WebRequest -Uri $ahk2exeUrl -OutFile "Ahk2Exe.zip"
           Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "Ahk2Exe"
+
           $baseUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
           Invoke-WebRequest -Uri $baseUrl -OutFile "Base.zip"
           Expand-Archive -Path "Base.zip" -DestinationPath "Base"
           Copy-Item "Base/v2/AutoHotkeyU64.exe" "AutoHotkeyU64.exe"
 
-      - name: Determine version from tag or manual input and update script
+      - name: Resolve version (tag or manual) and update script
         id: version
         shell: powershell
         run: |
+          # When launched manually, GitHub exposes inputs as env: INPUT_<name>
           if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:INPUT_VERSION) {
             $version = $env:INPUT_VERSION
           } elseif ($env:GITHUB_REF -match 'refs/tags/(.+)$') {
             $version = $matches[1]
           } else {
-            $version = "v0.0.0"
+            $version = 'v0.0.0'
           }
           $plain = $version.TrimStart('v')
           Set-Content "version.txt" $version
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "VERSION_PLAIN=$plain" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "`u2713 Version resolved: $version"
+
+          # Update version string inside AEMultibox.ahk (try a few common patterns)
           if (Test-Path "AEMultibox.ahk") {
             $content = Get-Content "AEMultibox.ahk" -Raw
             $content = $content -replace '(?m)^(\s*global\s+AppVersion\s*:=\s*")([^"]+)(")', "$1$plain$3"
             $content = $content -replace '(?m)^(\s*AppVersion\s*:=\s*")([^"]+)(")', "$1$plain$3"
-            $content = $content -replace '(?m)^(\s*;?\s*Version\s*:?")([^"]+)(")', "$1$plain$3"
+            $content = $content -replace '(?m)^(\s*;?\s*Version\s*:?\s*")([^"]+)(")', "$1$plain$3"
             Set-Content "AEMultibox.ahk" $content -Encoding UTF8
             Write-Host "`u2713 Updated AEMultibox.ahk version string to $plain"
           }
 
-      - name: Compile to executable
+      - name: Validate by compiling (Ahk2Exe dry-run)
+        shell: powershell
+        run: |
+          # Use the compiler to catch syntax errors without running the script.
+          .\Ahk2Exe\Ahk2Exe.exe /in AEMultibox.ahk /out _validate_tmp.exe /base AutoHotkeyU64.exe /compress 0
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Write-Error "Syntax/compile validation failed with exit code $code"
+            exit 1
+          }
+          if (Test-Path _validate_tmp.exe) { Remove-Item _validate_tmp.exe -Force }
+          Write-Host "`u2713 Syntax/compile validation passed"
+
+      - name: Compile to executable (release build)
         shell: powershell
         run: |
           .\Ahk2Exe\Ahk2Exe.exe /in AEMultibox.ahk /out AEMultibox.exe /base AutoHotkeyU64.exe /compress 1
@@ -110,7 +107,10 @@ jobs:
           Copy-Item AEMultibox.exe .\dist\
           Copy-Item AEMultibox.ahk .\dist\
           Copy-Item version.txt .\dist\
-          if (Test-Path .\AEBoost\AEBoost.exe) { Copy-Item .\AEBoost .\dist\AEBoost -Recurse; Write-Host "`u2713 Included AEBoost folder" }
+          if (Test-Path .\AEBoost\AEBoost.exe) {
+            Copy-Item .\AEBoost .\dist\AEBoost -Recurse
+            Write-Host "`u2713 Included AEBoost folder"
+          }
           @"
           # AEMultibox
 
@@ -122,7 +122,7 @@ jobs:
           - AEMultibox.exe
           - AEMultibox.ahk
           - version.txt
-          - (optional) AEBoost folder
+          - (optional) AEBoost/AEBoost.exe
           "@ | Set-Content .\dist\README.txt -Encoding UTF8
           Write-Host "`u2713 Distribution folder prepared"
 
