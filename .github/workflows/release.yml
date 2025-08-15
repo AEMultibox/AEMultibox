@@ -319,8 +319,9 @@ jobs:
           $checksumContent -join "`n" | Set-Content "dist/checksums.txt"
           
           # Create README for AEBoost integration if it doesn't exist
-          if (Test-Path "dist/AEBoost/AEBoost.exe" -and !(Test-Path "dist/AEBoost/README.txt")) {
-              @"
+          if (Test-Path "dist/AEBoost/AEBoost.exe") {
+              if (!(Test-Path "dist/AEBoost/README.txt")) {
+                  $aeboostReadme = @"
           AEBoost Integration
           ===================
           AEBoost.exe is included with permission from the original author.
@@ -331,7 +332,9 @@ jobs:
           3. AEMultibox will automatically launch and manage AEBoost
           
           Note: AEBoost must be in the 'AEBoost' subfolder relative to AEMultibox.exe
-          "@ | Set-Content "dist/AEBoost/README.txt"
+          "@
+                  Set-Content "dist/AEBoost/README.txt" $aeboostReadme
+              }
           }
           
           # Zip the distribution
