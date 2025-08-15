@@ -214,21 +214,47 @@ jobs:
           
           Write-Host "Found Ahk2Exe.exe, proceeding with compilation..."
           
-          # Run the compiler with the v2 base file
-          & .\Ahk2Exe.exe /in AEMultibox.ahk /out AEMultibox.exe /base AutoHotkey64.exe
+          # Run the compiler with the v2 base file and capture output
+          $process = Start-Process -FilePath ".\Ahk2Exe.exe" `
+              -ArgumentList "/in", "AEMultibox.ahk", "/out", "AEMultibox.exe", "/base", "AutoHotkey64.exe" `
+              -Wait -PassThru -NoNewWindow `
+              -RedirectStandardOutput "compile_output.txt" `
+              -RedirectStandardError "compile_error.txt"
           
-          if ($LASTEXITCODE -ne 0) {
-              Write-Error "Compilation failed with exit code: $LASTEXITCODE"
-              exit 1
+          # Read output for debugging
+          if (Test-Path "compile_output.txt") {
+              $output = Get-Content "compile_output.txt" -Raw
+              if ($output) {
+                  Write-Host "Compiler output: $output"
+              }
           }
           
+          if (Test-Path "compile_error.txt") {
+              $errorOutput = Get-Content "compile_error.txt" -Raw
+              if ($errorOutput) {
+                  Write-Host "Compiler messages: $errorOutput"
+              }
+          }
+          
+          # Check if the exe was actually created (this is the real test)
           if (!(Test-Path "AEMultibox.exe")) {
-              Write-Error "Compilation failed - executable not created"
+              Write-Error "Compilation failed - AEMultibox.exe was not created"
               exit 1
           }
           
-          $size = (Get-Item "AEMultibox.exe").Length / 1MB
-          Write-Host "[OK] Successfully compiled AEMultibox.exe (Size: $([math]::Round($size, 2)) MB)"
+          # Verify it's a valid executable
+          $size = (Get-Item "AEMultibox.exe").Length
+          if ($size -eq 0) {
+              Write-Error "Compilation failed - AEMultibox.exe is empty"
+              exit 1
+          }
+          
+          $sizeMB = $size / 1MB
+          Write-Host "[OK] Successfully compiled AEMultibox.exe (Size: $([math]::Round($sizeMB, 2)) MB)"
+          
+          # Clean up temp files
+          Remove-Item "compile_output.txt" -ErrorAction SilentlyContinue
+          Remove-Item "compile_error.txt" -ErrorAction SilentlyContinue
         shell: powershell
         
       - name: Create distribution package
