@@ -21,8 +21,13 @@ jobs:
         
       - name: Setup AutoHotkey
         run: |
-          # Download AutoHotkey v2
-          Invoke-WebRequest -Uri "https://www.autohotkey.com/download/ahk-v2.exe" -OutFile "AutoHotkey.exe"
+          # Download AutoHotkey v2 from GitHub releases (more reliable)
+          $ahkUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
+          Invoke-WebRequest -Uri $ahkUrl -OutFile "AutoHotkey.zip"
+          Expand-Archive -Path "AutoHotkey.zip" -DestinationPath "AutoHotkey"
+          
+          # Copy the executable to the root for easier access
+          Copy-Item "AutoHotkey\AutoHotkey64.exe" "AutoHotkey.exe"
           
       - name: Validate AHK Script Syntax
         run: |
@@ -66,8 +71,11 @@ jobs:
           Invoke-WebRequest -Uri $ahkUrl -OutFile "Ahk2Exe.zip"
           Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "Ahk2Exe"
           
-          # Download AutoHotkey v2 base file
-          Invoke-WebRequest -Uri "https://www.autohotkey.com/download/ahk-v2.exe" -OutFile "AutoHotkeyU64.exe"
+          # Download AutoHotkey v2 base file from GitHub
+          $baseUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
+          Invoke-WebRequest -Uri $baseUrl -OutFile "AutoHotkeyBase.zip"
+          Expand-Archive -Path "AutoHotkeyBase.zip" -DestinationPath "AutoHotkeyBase"
+          Copy-Item "AutoHotkeyBase\AutoHotkey64.exe" "AutoHotkeyU64.exe"
         shell: powershell
         
       - name: Update version in script
@@ -113,7 +121,7 @@ jobs:
           Copy-Item "AEMultibox.exe" "dist/"
           Copy-Item "AEMultibox.ahk" "dist/"
           Copy-Item "version.txt" "dist/"
-          Copy-Item "README.md" "dist/"         
+          Copy-Item "README.md" "dist/"
           
           # Copy AEBoost files if they exist
           if (Test-Path "AEBoost/AEBoost.exe") {
