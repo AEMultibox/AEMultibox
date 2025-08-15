@@ -344,16 +344,17 @@ jobs:
           Write-Host ""
           Write-Host "Distribution package created with the following structure:"
           Write-Host "AEMultibox-dist.zip"
-          Write-Host "├── AEMultibox.exe"
-          Write-Host "├── AEMultibox.ahk"
-          Write-Host "├── version.txt"
-          Write-Host "├── checksums.txt"
-          Write-Host "├── README.md"
+          Write-Host "  - AEMultibox.exe"
+          Write-Host "  - AEMultibox.ahk"
+          Write-Host "  - version.txt"
+          Write-Host "  - checksums.txt"
+          Write-Host "  - README.md"
           if (Test-Path "dist/AEBoost/AEBoost.exe") {
-              Write-Host "└── AEBoost/"
-              Write-Host "    ├── AEBoost.exe"
-              Get-ChildItem "dist/AEBoost" -Name | Where-Object { $_ -ne "AEBoost.exe" } | ForEach-Object { 
-                  Write-Host "    ├── $_" 
+              Write-Host "  - AEBoost/"
+              Write-Host "      - AEBoost.exe"
+              $aeboostFiles = Get-ChildItem "dist/AEBoost" -Name | Where-Object { $_ -ne "AEBoost.exe" }
+              foreach ($file in $aeboostFiles) {
+                  Write-Host "      - $file"
               }
           }
           
