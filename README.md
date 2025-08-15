@@ -1,4 +1,4 @@
-# AE Multi-Window Tool v1.0
+# AE Multi-Window Tool
 
 A comprehensive AutoHotkey script for managing multiple Ashen Empires game windows with advanced combat detection, chat monitoring, and automated features.
 
