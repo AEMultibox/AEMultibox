@@ -91,11 +91,12 @@ jobs:
         run: |
           Write-Host "Setting up AutoHotkey v2 compiler environment..."
           
-          # Try different Ahk2Exe release URLs
+          # Try different Ahk2Exe release URLs (using correct URL format)
           $urls = @(
-              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.02a0a/Ahk2Exe.zip",
-              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.02a0/Ahk2Exe.zip",
-              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.01c/Ahk2Exe.zip"
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.02a0a/Ahk2Exe1.1.37.02a0.zip",
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.02a0/Ahk2Exe1.1.37.02a0.zip",
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.01c1/Ahk2Exe1.1.37.01c1.zip",
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.01c/Ahk2Exe.zip"
           )
           
           $downloaded = $false
@@ -112,25 +113,17 @@ jobs:
           }
           
           if (!$downloaded) {
-              # Fallback: Download the exe directly from a known working release
-              Write-Host "Trying direct exe download as fallback..."
-              $exeUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.01c/Ahk2Exe.exe"
-              try {
-                  Invoke-WebRequest -Uri $exeUrl -OutFile "Ahk2Exe.exe" -UseBasicParsing
-                  Write-Host "Downloaded Ahk2Exe.exe directly"
-              } catch {
-                  Write-Error "Failed to download Ahk2Exe from any source"
-                  exit 1
-              }
-          } else {
-              # Extract compiler
-              Write-Host "Extracting Ahk2Exe compiler..."
-              Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "." -Force
+              Write-Error "Failed to download Ahk2Exe from any source. Please check the releases page."
+              exit 1
           }
+          
+          # Extract compiler
+          Write-Host "Extracting Ahk2Exe compiler..."
+          Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "." -Force
           
           # Verify Ahk2Exe.exe exists
           if (!(Test-Path "Ahk2Exe.exe")) {
-              Write-Error "Ahk2Exe.exe not found"
+              Write-Error "Ahk2Exe.exe not found after extraction"
               exit 1
           }
           
@@ -161,12 +154,23 @@ jobs:
               exit 1
           }
           
-          # Also download BinMod.exe if needed (for post-processing)
-          $binmodUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.01c/BinMod.exe"
-          try {
-              Invoke-WebRequest -Uri $binmodUrl -OutFile "BinMod.exe" -UseBasicParsing
-              Write-Host "BinMod.exe downloaded (for post-processing)"
-          } catch {
+          # Try to download BinMod.exe (optional, for post-processing)
+          $binmodUrls = @(
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.02a0a/BinMod.exe",
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.01c1/BinMod.exe"
+          )
+          
+          foreach ($url in $binmodUrls) {
+              try {
+                  Invoke-WebRequest -Uri $url -OutFile "BinMod.exe" -UseBasicParsing
+                  Write-Host "BinMod.exe downloaded (for post-processing)"
+                  break
+              } catch {
+                  # Continue to next URL
+              }
+          }
+          
+          if (!(Test-Path "BinMod.exe")) {
               Write-Host "Warning: Could not download BinMod.exe (optional)"
           }
           
