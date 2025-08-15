@@ -31,26 +31,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download & setup AutoHotkey v2 (runtime + compiler)
+      - name: Install AutoHotkey v2 locally (silent)
         shell: powershell
         run: |
-          # Download the official AutoHotkey v2 zip once
-          $ahkZipUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
-          Invoke-WebRequest -Uri $ahkZipUrl -OutFile "AutoHotkey.zip"
-          Expand-Archive -Path "AutoHotkey.zip" -DestinationPath "AutoHotkey" -Force
+          $version = '2.0.18'
+          $setupUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v$version/AutoHotkey_$version_setup.exe"
+          Invoke-WebRequest -Uri $setupUrl -OutFile "AutoHotkeySetup.exe"
 
-          # Runtime (for /ErrorStdOut if needed)
-          Copy-Item "AutoHotkey/AutoHotkey64.exe" "AutoHotkey.exe" -Force
+          # Install to a writable folder in the workspace (no admin needed)
+          $installDir = Join-Path $PWD 'ahk'
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
-          # Locate compiler (Ahk2Exe) and v2 base (AutoHotkeyU64.exe) from the same zip
-          $ahk2exe = Get-ChildItem -Path "AutoHotkey" -Recurse -Filter "Ahk2Exe.exe" | Select-Object -First 1
-          $baseU64 = Get-ChildItem -Path "AutoHotkey" -Recurse -Filter "AutoHotkeyU64.exe" | Select-Object -First 1
-          if (-not $ahk2exe) { Write-Error "Ahk2Exe.exe not found inside AutoHotkey zip"; exit 1 }
-          if (-not $baseU64) { Write-Error "AutoHotkeyU64.exe (base) not found inside AutoHotkey zip"; exit 1 }
-          "AHK2EXE=$($ahk2exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "BASE_U64=$($baseU64.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "`u2713 Found compiler: $($ahk2exe.FullName)"
-          Write-Host "`u2713 Found base: $($baseU64.FullName)"
+          Start-Process -FilePath .\AutoHotkeySetup.exe -ArgumentList "/SILENT","/NORESTART","/DIR=$installDir" -Wait
+
+          $ahk2exe = Join-Path $installDir 'Compiler\Ahk2Exe.exe'
+          $baseU64 = Join-Path $installDir 'AutoHotkeyU64.exe'
+          if (!(Test-Path $ahk2exe)) { Write-Error "Ahk2Exe.exe not found at $ahk2exe"; exit 1 }
+          if (!(Test-Path $baseU64)) { Write-Error "AutoHotkeyU64.exe not found at $baseU64"; exit 1 }
+
+          "AHK2EXE=$ahk2exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "BASE_U64=$baseU64" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "`u2713 Installed AutoHotkey v$version to $installDir"
+          Write-Host "`u2713 Found compiler: $ahk2exe"
+          Write-Host "`u2713 Found base: $baseU64"
 
       - name: Resolve version (tag or manual) and update script
         id: version
@@ -102,7 +105,10 @@ jobs:
           Copy-Item AEMultibox.exe .\dist\
           Copy-Item AEMultibox.ahk .\dist\
           Copy-Item version.txt .\dist\
-          if (Test-Path .\AEBoost\AEBoost.exe) { Copy-Item .\AEBoost .\dist\AEBoost -Recurse; Write-Host "`u2713 Included AEBoost folder" }
+          if (Test-Path .\AEBoost\AEBoost.exe) {
+            Copy-Item .\AEBoost .\dist\AEBoost -Recurse
+            Write-Host "`u2713 Included AEBoost folder"
+          }
           @"
           # AEMultibox
 
