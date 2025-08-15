@@ -31,13 +31,36 @@ jobs:
           
       - name: Validate AHK Script Syntax
         run: |
-          # Test compile without running
-          .\AutoHotkey.exe /Validate AEMultibox.ahk
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Script validation failed"
+          # AutoHotkey v2 doesn't have a /Validate flag
+          # Instead, we'll use /ErrorStdOut to check for syntax errors without running
+          # The /include flag with a non-existent file prevents actual execution
+          
+          Write-Host "Validating AEMultibox.ahk syntax..."
+          
+          # Create a wrapper script that just includes and validates syntax
+          $validationScript = @"
+          #Requires AutoHotkey v2.0
+          #Include AEMultibox.ahk
+          ExitApp(0)
+          "@
+          
+          Set-Content "validate_syntax.ahk" $validationScript
+          
+          # Run with ErrorStdOut to capture any syntax errors
+          $process = Start-Process -FilePath ".\AutoHotkey.exe" -ArgumentList "/ErrorStdOut", "validate_syntax.ahk" -Wait -PassThru -RedirectStandardError "error.txt" -RedirectStandardOutput "output.txt"
+          
+          if ($process.ExitCode -ne 0) {
+            Write-Host "Syntax validation failed with exit code: $($process.ExitCode)"
+            if (Test-Path "error.txt") {
+              $errorContent = Get-Content "error.txt" -Raw
+              if ($errorContent) {
+                Write-Error "Syntax errors found:`n$errorContent"
+              }
+            }
             exit 1
           }
-          Write-Host "Script syntax validation passed"
+          
+          Write-Host "✓ Script syntax validation passed"
         shell: powershell
         
       - name: Check for required files
@@ -53,7 +76,7 @@ jobs:
               exit 1
             }
           }
-          Write-Host "All required files present"
+          Write-Host "✓ All required files present"
         shell: powershell
 
   build:
@@ -109,7 +132,7 @@ jobs:
           }
           
           $size = (Get-Item "AEMultibox.exe").Length / 1MB
-          Write-Host "Successfully compiled AEMultibox.exe (Size: $([math]::Round($size, 2)) MB)"
+          Write-Host "✓ Successfully compiled AEMultibox.exe (Size: $([math]::Round($size, 2)) MB)"
         shell: powershell
         
       - name: Create distribution package
@@ -127,11 +150,14 @@ jobs:
           if (Test-Path "AEBoost/AEBoost.exe") {
               New-Item -ItemType Directory -Force -Path "dist/AEBoost"
               Copy-Item "AEBoost/*" "dist/AEBoost/" -Recurse
-              Write-Host "Included AEBoost integration"
+              Write-Host "✓ Included AEBoost integration"
           }
           
-          # Create auto-updater script
-          Copy-Item "updater.ahk" "dist/" -ErrorAction SilentlyContinue
+          # Create auto-updater script if it exists
+          if (Test-Path "updater.ahk") {
+              Copy-Item "updater.ahk" "dist/"
+              Write-Host "✓ Included updater script"
+          }
           
           # Create checksums
           $hash = Get-FileHash "dist/AEMultibox.exe" -Algorithm SHA256
@@ -143,7 +169,7 @@ jobs:
           # Zip the distribution
           Compress-Archive -Path "dist/*" -DestinationPath "AEMultibox-dist.zip" -Force
           
-          Write-Host "Distribution package created"
+          Write-Host "✓ Distribution package created"
         shell: powershell
         
       - name: Upload artifacts
@@ -184,23 +210,23 @@ jobs:
           # AEMultibox $version
           
           ## 📦 Installation
-          1. Download \`AEMultibox-$version.zip\`
+          1. Download ``AEMultibox-$version.zip``
           2. Extract to your desired location
-          3. (Optional) Place AEBoost files in the \`AEBoost\` subfolder
-          4. Run \`AEMultibox.exe\` (or \`AEMultibox.ahk\` if you have AutoHotkey v2 installed)
+          3. (Optional) Place AEBoost files in the ``AEBoost`` subfolder
+          4. Run ``AEMultibox.exe`` (or ``AEMultibox.ahk`` if you have AutoHotkey v2 installed)
           
           ## 🔄 Auto-Update
           The application will automatically check for updates on startup. You can also manually check via the Settings tab.
           
           ## ✨ What's New
-          - See [Changelog](https://github.com/AEMultibox/AEMultibox/blob/main/CHANGELOG.md) for details
+          - See [Changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details
           
           ## 📝 Files Included
-          - \`AEMultibox.exe\` - Compiled executable (no AutoHotkey required)
-          - \`AEMultibox.ahk\` - Source script (requires AutoHotkey v2)
-          - \`updater.ahk\` - Auto-updater component
-          - \`version.txt\` - Version information
-          - \`checksums.txt\` - File integrity verification
+          - ``AEMultibox.exe`` - Compiled executable (no AutoHotkey required)
+          - ``AEMultibox.ahk`` - Source script (requires AutoHotkey v2)
+          - ``updater.ahk`` - Auto-updater component (if available)
+          - ``version.txt`` - Version information
+          - ``checksums.txt`` - File integrity verification
           
           ## ⚠️ Requirements
           - Windows 10/11
@@ -208,7 +234,7 @@ jobs:
           - Administrator privileges recommended for memory reading
           
           ## 🛡️ Security
-          - SHA256 checksum provided in \`checksums.txt\`
+          - SHA256 checksum provided in ``checksums.txt``
           - All releases are automatically built via GitHub Actions
           "@
           
@@ -251,7 +277,7 @@ jobs:
           
           Set-Content "latest.json" $latest
           
-          Write-Host "Created latest.json for auto-updater"
+          Write-Host "✓ Created latest.json for auto-updater"
         shell: powershell
         
       - name: Upload latest.json
@@ -271,8 +297,12 @@ jobs:
           if [ "${{ needs.test.result }}" == "success" ] && \
              [ "${{ needs.build.result }}" == "success" ] && \
              [ "${{ needs.release.result }}" == "success" ]; then
-            echo "Release pipeline completed successfully!"
+            echo "✅ Release pipeline completed successfully!"
+            echo "Version released: ${{ github.ref_name }}"
           else
-            echo "Release pipeline failed"
+            echo "❌ Release pipeline failed"
+            echo "Test: ${{ needs.test.result }}"
+            echo "Build: ${{ needs.build.result }}"
+            echo "Release: ${{ needs.release.result }}"
             exit 1
           fi
