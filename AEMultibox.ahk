@@ -1,10 +1,24 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+; Version: v1.0.0
+
+; ================================
+; Auto-Update Configuration
+; ================================
+global APP_VERSION := "v1.0.0"
+global UPDATE_CHECK_URL := "https://api.github.com/repos/AEMultibox/AEMultibox/releases/latest"
+global UPDATE_CHECK_INTERVAL := 3600000  ; Check every hour (in milliseconds)
+global AUTO_UPDATE_ENABLED := true
+global LAST_UPDATE_CHECK := 0
 
 ; ================================
 ; Admin / startup
 ; ================================
 global USE_MEMORY_READING := true
+
+; Check for updates before anything else
+CheckForUpdates(true)  ; true = silent check on startup
+
 if !A_IsAdmin {
     result := MsgBox(
         "This script works best with administrator privileges to read game memory for accurate combat detection.`n`n" .
@@ -73,6 +87,166 @@ global AutoRuneEnabled := false
 global AEBoostProcess := 0
 
 ; ================================
+; Auto-Update Functions
+; ================================
+CheckForUpdates(silent := false) {
+    global APP_VERSION, UPDATE_CHECK_URL, AUTO_UPDATE_ENABLED, LAST_UPDATE_CHECK
+    
+    if (!AUTO_UPDATE_ENABLED)
+        return
+    
+    ; Rate limit update checks
+    currentTime := A_TickCount
+    if (currentTime - LAST_UPDATE_CHECK < 60000)  ; Don't check more than once per minute
+        return
+    
+    LAST_UPDATE_CHECK := currentTime
+    
+    try {
+        ; Create temporary file for version check
+        tempFile := A_Temp . "\aemultibox_version_check.json"
+        
+        ; Download version info using PowerShell
+        psCommand := 'Invoke-WebRequest -Uri "' . UPDATE_CHECK_URL . '" -OutFile "' . tempFile . '" -UseBasicParsing'
+        RunWait('powershell.exe -ExecutionPolicy Bypass -Command "' . psCommand . '"',, "Hide")
+        
+        if (!FileExist(tempFile))
+            throw Error("Failed to download version information")
+        
+        ; Read and parse JSON
+        jsonContent := FileRead(tempFile)
+        
+        ; Extract version using regex (simple JSON parsing)
+        if (RegExMatch(jsonContent, '"tag_name"\s*:\s*"([^"]+)"', &match)) {
+            latestVersion := match[1]
+            
+            ; Compare versions
+            if (CompareVersions(latestVersion, APP_VERSION) > 0) {
+                ; Extract download URL
+                downloadUrl := ""
+                if (RegExMatch(jsonContent, '"browser_download_url"\s*:\s*"([^"]*AEMultibox\.exe[^"]*)"', &urlMatch)) {
+                    downloadUrl := urlMatch[1]
+                }
+                
+                if (!silent) {
+                    ShowUpdateDialog(latestVersion, downloadUrl)
+                } else {
+                    ; Show notification for silent check
+                    TrayTip("Update Available", "AEMultibox " . latestVersion . " is available!`nCheck Settings tab to update.", "Info")
+                }
+            } else if (!silent) {
+                MsgBox("You are running the latest version (" . APP_VERSION . ")", "No Updates", 0x40)
+            }
+        }
+        
+        ; Clean up
+        try FileDelete(tempFile)
+        
+    } catch as err {
+        if (!silent) {
+            MsgBox("Failed to check for updates: " . err.Message, "Update Check Error", 0x10)
+        }
+    }
+}
+
+CompareVersions(v1, v2) {
+    ; Remove 'v' prefix if present
+    v1 := RegExReplace(v1, "^v", "")
+    v2 := RegExReplace(v2, "^v", "")
+    
+    ; Split into parts
+    parts1 := StrSplit(v1, ".")
+    parts2 := StrSplit(v2, ".")
+    
+    ; Compare each part
+    maxParts := Max(parts1.Length, parts2.Length)
+    Loop maxParts {
+        p1 := (A_Index <= parts1.Length) ? Integer(parts1[A_Index]) : 0
+        p2 := (A_Index <= parts2.Length) ? Integer(parts2[A_Index]) : 0
+        
+        if (p1 > p2)
+            return 1
+        else if (p1 < p2)
+            return -1
+    }
+    
+    return 0  ; Versions are equal
+}
+
+ShowUpdateDialog(newVersion, downloadUrl := "") {
+    global APP_VERSION
+    
+    message := "A new version of AEMultibox is available!`n`n"
+    message .= "Current version: " . APP_VERSION . "`n"
+    message .= "New version: " . newVersion . "`n`n"
+    
+    if (downloadUrl != "") {
+        message .= "Would you like to download and install the update now?"
+        result := MsgBox(message, "Update Available", 0x34)
+        
+        if (result == "Yes") {
+            DownloadAndInstallUpdate(downloadUrl, newVersion)
+        }
+    } else {
+        message .= "Please visit the GitHub releases page to download the update."
+        MsgBox(message, "Update Available", 0x40)
+    }
+}
+
+DownloadAndInstallUpdate(downloadUrl, newVersion) {
+    try {
+        ; Show progress dialog
+        progressGui := Gui("+AlwaysOnTop -MinimizeBox", "Downloading Update...")
+        progressGui.Add("Text", "w300 Center", "Downloading AEMultibox " . newVersion . "...")
+        progressBar := progressGui.Add("Progress", "w300 h20", 0)
+        statusText := progressGui.Add("Text", "w300 Center", "Preparing download...")
+        progressGui.Show()
+        
+        ; Download new version
+        tempFile := A_Temp . "\AEMultibox_update.exe"
+        backupFile := A_ScriptFullPath . ".backup"
+        
+        ; Download using PowerShell with progress
+        statusText.Text := "Downloading update..."
+        psCommand := 'Invoke-WebRequest -Uri "' . downloadUrl . '" -OutFile "' . tempFile . '" -UseBasicParsing'
+        RunWait('powershell.exe -ExecutionPolicy Bypass -Command "' . psCommand . '"',, "Hide")
+        
+        if (!FileExist(tempFile)) {
+            throw Error("Download failed")
+        }
+        
+        progressBar.Value := 50
+        statusText.Text := "Installing update..."
+        
+        ; Create updater batch script
+        updaterScript := A_Temp . "\aemultibox_updater.bat"
+        updaterContent := "@echo off`n"
+        updaterContent .= "timeout /t 2 /nobreak > nul`n"  ; Wait for current process to exit
+        updaterContent .= 'move /y "' . A_ScriptFullPath . '" "' . backupFile . '"`n'  ; Backup current
+        updaterContent .= 'move /y "' . tempFile . '" "' . A_ScriptFullPath . '"`n'  ; Install new
+        updaterContent .= 'start "" "' . A_ScriptFullPath . '"`n'  ; Start new version
+        updaterContent .= 'del "%~f0"`n'  ; Delete this batch file
+        
+        FileAppend(updaterContent, updaterScript)
+        
+        progressBar.Value := 100
+        statusText.Text := "Restarting with new version..."
+        
+        ; Clean up before restart
+        progressGui.Destroy()
+        
+        ; Execute updater and exit
+        Run(updaterScript,, "Hide")
+        ExitApp()
+        
+    } catch as err {
+        if (IsSet(progressGui))
+            progressGui.Destroy()
+        MsgBox("Update failed: " . err.Message . "`n`nPlease download the update manually from GitHub.", "Update Error", 0x10)
+    }
+}
+
+; ================================
 ; GUI
 ; ================================
 global MyGui := Gui(, "AE Multi-Window Tool v1.0")
@@ -99,7 +273,7 @@ global Window2CombatText := MyGui.Add("Text", "w330 Center y+5", "Sandbox Window
 
 global ChatStatusText := MyGui.Add("Text", "w330 Center y+5", "Chat: Inactive")
 
-MyGui.Add("Text", "xs y+10 w330", "─────────────────────────────")
+MyGui.Add("Text", "xs y+10 w330", "────────────────────────────────")
 
 global ChatDetectCheckbox := MyGui.Add("CheckBox", "x20 y+5 Checked", "Enable Memory Chat Detection")
 ChatDetectCheckbox.OnEvent("Click", (*) => (USE_CHAT_DETECTION := ChatDetectCheckbox.Value))
@@ -126,18 +300,18 @@ global DirectionDropdown := MyGui.Add("DropDownList", "w330 xs", ["Switching To 
 DirectionDropdown.Choose(1)
 DirectionDropdown.OnEvent("Change", (*) => (followDirection := DirectionDropdown.Text))
 
-MyGui.Add("Text", "xs y+10 w330", "─────────────────────────────")
+MyGui.Add("Text", "xs y+10 w330", "────────────────────────────────")
 MyGui.Add("Text", "xs y+5", "Q Key Behavior:")
 
 global qPressInvertCheckbox := MyGui.Add("CheckBox", "xs+10 y+5", "Invert (Single=Active, Double=All)")
 qPressInvertCheckbox.OnEvent("Click", (*) => (qPressInverted := qPressInvertCheckbox.Value))
 
-MyGui.Add("Text", "xs y+10 w330", "─────────────────────────────")
+MyGui.Add("Text", "xs y+10 w330", "────────────────────────────────")
 MyGui.Add("Text", "xs y+5", "Right Alt + Key:")
 MyGui.Add("Text", "xs+10 y+5 w310", "Hold Right Alt and press any key to send it to the other game window")
 
 ; AEBoost Integration section
-MyGui.Add("Text", "xs y+15 w330", "─────────────────────────────")
+MyGui.Add("Text", "xs y+15 w330", "────────────────────────────────")
 MyGui.Add("Text", "xs y+5", "AEBoost Integration:")
 
 global AutoRuneButton := MyGui.Add("Button", "xs y+5 w150 h25", "Enable AutoRune")
@@ -145,6 +319,19 @@ AutoRuneButton.OnEvent("Click", ToggleAutoRune)
 
 global AutoRuneStatus := MyGui.Add("Text", "x+10 yp+5 w150", "Status: Disabled")
 AutoRuneStatus.SetFont("s9")
+
+; Auto-Update section
+MyGui.Add("Text", "xs y+15 w330", "────────────────────────────────")
+MyGui.Add("Text", "xs y+5", "Auto-Update:")
+
+global AutoUpdateCheckbox := MyGui.Add("CheckBox", "xs y+5 Checked", "Check for updates automatically")
+AutoUpdateCheckbox.OnEvent("Click", (*) => (AUTO_UPDATE_ENABLED := AutoUpdateCheckbox.Value))
+
+global UpdateButton := MyGui.Add("Button", "xs y+5 w150 h25", "Check for Updates")
+UpdateButton.OnEvent("Click", (*) => CheckForUpdates(false))
+
+global VersionText := MyGui.Add("Text", "x+10 yp+5 w150", "Version: " . APP_VERSION)
+VersionText.SetFont("s9")
 
 ; Info tab
 Tab.UseTab(3)
@@ -160,6 +347,10 @@ MyGui.Add("Text", "w330", "• Esc: Exit chat mode & combat")
 MyGui.Add("Text", "w330 y+10", "AEBOOST:")
 MyGui.Add("Text", "w330", "• AutoRune: Automatically swaps and refreshes runes")
 MyGui.Add("Text", "w330", "• Enable from Settings tab")
+MyGui.Add("Text", "w330 y+10", "AUTO-UPDATE:")
+MyGui.Add("Text", "w330", "• Checks for updates on startup")
+MyGui.Add("Text", "w330", "• Manual check in Settings tab")
+MyGui.Add("Text", "w330", "• Automatic download and install")
 
 ; Tab / Close handlers
 Tab.UseTab()
@@ -178,6 +369,7 @@ if (USE_MEMORY_READING)
 UpdateWindowCount()
 SetTimer(CheckCombatState, 150)
 SetTimer(UpdateChatDisplay, 100)
+SetTimer(() => CheckForUpdates(true), UPDATE_CHECK_INTERVAL)  ; Periodic update check
 
 ; ================================
 ; Event Handlers / Helpers / Core
@@ -188,9 +380,9 @@ OnTabChange(*) {
     ; Per-tab window heights
     targetHeight := 310           ; Main (tab 1) - tighter
     if (currentTab == 2)
-        targetHeight := 450       ; Settings (tab 2) - tallest for AEBoost section
+        targetHeight := 510       ; Settings (tab 2) - tallest for AEBoost and Update sections
     else if (currentTab == 3)
-        targetHeight := 460       ; Info (tab 3) - more room for hotkeys
+        targetHeight := 490       ; Info (tab 3) - more room for hotkeys and update info
     MyGui.GetPos(&x, &y, &w, &h)
     if (h != targetHeight)
         MyGui.Move(, , , targetHeight)
