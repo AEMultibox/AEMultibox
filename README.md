@@ -97,6 +97,8 @@ The script includes built-in support for AEBoost's AutoRune feature:
 3. AutoRune runs silently in the background
 4. Automatically manages rune swapping and refreshing
 
+This tool includes a modified version of [AEBoost](https://github.com/Tserith/AEBoost) by Tserith, used with permission. The modified version enables seamless AutoRune functionality.
+
 ### AEBoost Structure
 ```
 YourScript/

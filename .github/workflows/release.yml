@@ -113,17 +113,14 @@ jobs:
           Copy-Item "AEMultibox.exe" "dist/"
           Copy-Item "AEMultibox.ahk" "dist/"
           Copy-Item "version.txt" "dist/"
-          Copy-Item "README.md" "dist/"
+          Copy-Item "README.md" "dist/"         
           
-          # Create AEBoost directory structure
-          New-Item -ItemType Directory -Force -Path "dist/AEBoost"
-          
-          # Add placeholder for AEBoost
-          @"
-          Place AEBoost files here:
-          - AEBoost.exe
-          - Any required AEBoost configuration files
-          "@ | Set-Content "dist/AEBoost/PLACE_AEBOOST_HERE.txt"
+          # Copy AEBoost files if they exist
+          if (Test-Path "AEBoost/AEBoost.exe") {
+              New-Item -ItemType Directory -Force -Path "dist/AEBoost"
+              Copy-Item "AEBoost/*" "dist/AEBoost/" -Recurse
+              Write-Host "✓ Included AEBoost integration"
+          }
           
           # Create auto-updater script
           Copy-Item "updater.ahk" "dist/" -ErrorAction SilentlyContinue
