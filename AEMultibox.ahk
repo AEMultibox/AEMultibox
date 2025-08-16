@@ -250,7 +250,7 @@ DownloadAndInstallUpdate(downloadUrl, newVersion) {
 ; ================================
 ; GUI
 ; ================================
-global MyGui := Gui(, "AE Multi-Window Tool v1.0")
+global MyGui := Gui(, "AE Multi-Window Tool")
 MyGui.Opt("+Resize -MaximizeBox +MinSize250x200")
 MyGui.SetFont("s10", "Segoe UI")
 MyGui.BackColor := "0xF0F0F0"
