@@ -1,6 +1,5 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-
 ; Version: v1.0.4
 
 ; ================================
