@@ -3,140 +3,524 @@ name: Build and Release AEMultibox
 on:
   push:
     tags:
-      - "v*"
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.1)'
+        required: true
+        type: string
 
 jobs:
-  build:
+  test:
+    name: Test Script Syntax
     runs-on: windows-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup AutoHotkey (v2)
-        shell: powershell
+        
+      - name: Setup AutoHotkey
         run: |
+          # Download AutoHotkey v2 from GitHub releases (more reliable)
           $ahkUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
           Invoke-WebRequest -Uri $ahkUrl -OutFile "AutoHotkey.zip"
           Expand-Archive -Path "AutoHotkey.zip" -DestinationPath "AutoHotkey"
+          
+          # Copy the executable to the root for easier access
           Copy-Item "AutoHotkey\AutoHotkey64.exe" "AutoHotkey.exe"
-
+          
       - name: Validate AHK Script Syntax
-        shell: powershell
         run: |
+          # AutoHotkey v2 doesn't have a /Validate flag
+          # Instead, we'll use /ErrorStdOut to check for syntax errors without running
+          # The /include flag with a non-existent file prevents actual execution
+          
           Write-Host "Validating AEMultibox.ahk syntax..."
-
+          
+          # Create a wrapper script that just includes and validates syntax
           $validationScript = @"
           #Requires AutoHotkey v2.0
           #Include AEMultibox.ahk
           ExitApp(0)
           "@
-
-          Set-Content -Path "validate_syntax.ahk" -Value $validationScript -Encoding UTF8
-
-          $ahkExe = "$PWD\AutoHotkey.exe"
-          & $ahkExe '/ErrorStdOut' 'validate_syntax.ahk' 1> output.txt 2> error.txt
-          $exit = $LASTEXITCODE
-
-          if ($exit -ne 0) {
-            Write-Host "Syntax validation failed with exit code: $exit"
+          
+          Set-Content "validate_syntax.ahk" $validationScript
+          
+          # Run with ErrorStdOut to capture any syntax errors
+          $process = Start-Process -FilePath ".\AutoHotkey.exe" -ArgumentList "/ErrorStdOut", "validate_syntax.ahk" -Wait -PassThru -RedirectStandardError "error.txt" -RedirectStandardOutput "output.txt"
+          
+          if ($process.ExitCode -ne 0) {
+            Write-Host "Syntax validation failed with exit code: $($process.ExitCode)"
             if (Test-Path "error.txt") {
               $errorContent = Get-Content "error.txt" -Raw
-              if ($errorContent) { Write-Error "Syntax errors:`n$errorContent" }
+              if ($errorContent) {
+                Write-Error "Syntax errors found:`n$errorContent"
+              }
             }
             exit 1
           }
-
-          Write-Host "`u2713 Script syntax validation passed"
-
-      - name: Download Ahk2Exe compiler
+          
+          Write-Host "[OK] Script syntax validation passed"
         shell: powershell
+        
+      - name: Check for required files
         run: |
-          $ahk2exeUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/download/v1.1.37.01/Ahk2Exe.exe.zip"
-          Invoke-WebRequest -Uri $ahk2exeUrl -OutFile "Ahk2Exe.zip"
-          Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "Ahk2Exe"
+          $requiredFiles = @(
+            "AEMultibox.ahk",
+            "README.md"
+          )
+          
+          foreach ($file in $requiredFiles) {
+            if (!(Test-Path $file)) {
+              Write-Error "Required file missing: $file"
+              exit 1
+            }
+          }
+          Write-Host "[OK] All required files present"
+        shell: powershell
 
+  build:
+    name: Build Executable
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup AutoHotkey Compiler
+        run: |
+          Write-Host "Setting up AutoHotkey v2 compiler environment..."
+          
+          # Try different Ahk2Exe release URLs (using correct URL format)
+          $urls = @(
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.02a0a/Ahk2Exe1.1.37.02a0.zip",
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.02a0/Ahk2Exe1.1.37.02a0.zip",
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.01c1/Ahk2Exe1.1.37.01c1.zip",
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.01c/Ahk2Exe.zip"
+          )
+          
+          $downloaded = $false
+          foreach ($url in $urls) {
+              Write-Host "Trying to download from: $url"
+              try {
+                  Invoke-WebRequest -Uri $url -OutFile "Ahk2Exe.zip" -UseBasicParsing
+                  Write-Host "Successfully downloaded Ahk2Exe.zip"
+                  $downloaded = $true
+                  break
+              } catch {
+                  Write-Host "Failed: $_"
+              }
+          }
+          
+          if (!$downloaded) {
+              Write-Error "Failed to download Ahk2Exe from any source. Please check the releases page."
+              exit 1
+          }
+          
+          # Extract compiler
+          Write-Host "Extracting Ahk2Exe compiler..."
+          Expand-Archive -Path "Ahk2Exe.zip" -DestinationPath "." -Force
+          
+          # Verify Ahk2Exe.exe exists
+          if (!(Test-Path "Ahk2Exe.exe")) {
+              Write-Error "Ahk2Exe.exe not found after extraction"
+              exit 1
+          }
+          
+          Write-Host "Ahk2Exe.exe found"
+          
+          # Download AutoHotkey v2 for base files
           $baseUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
-          Invoke-WebRequest -Uri $baseUrl -OutFile "Base.zip"
-          Expand-Archive -Path "Base.zip" -DestinationPath "Base"
-          Copy-Item "Base/v2/AutoHotkeyU64.exe" "AutoHotkeyU64.exe"
-
-      - name: Determine version from tag
-        id: version
+          Write-Host "Downloading AutoHotkey v2 base files..."
+          
+          try {
+              Invoke-WebRequest -Uri $baseUrl -OutFile "AutoHotkeyBase.zip" -UseBasicParsing
+              Write-Host "AutoHotkey base files downloaded successfully"
+          } catch {
+              Write-Error "Failed to download AutoHotkey base: $_"
+              exit 1
+          }
+          
+          # Extract base files
+          Write-Host "Extracting AutoHotkey base files..."
+          Expand-Archive -Path "AutoHotkeyBase.zip" -DestinationPath "AutoHotkeyBase" -Force
+          
+          # Copy base executable for compilation (using the v2 64-bit exe as base)
+          if (Test-Path "AutoHotkeyBase\AutoHotkey64.exe") {
+              Copy-Item "AutoHotkeyBase\AutoHotkey64.exe" ".\AutoHotkey64.exe"
+              Write-Host "Base file AutoHotkey64.exe copied"
+          } else {
+              Write-Error "AutoHotkey64.exe not found in base package"
+              exit 1
+          }
+          
+          # Try to download BinMod.exe (optional, for post-processing)
+          $binmodUrls = @(
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.02a0a/BinMod.exe",
+              "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.01c1/BinMod.exe"
+          )
+          
+          foreach ($url in $binmodUrls) {
+              try {
+                  Invoke-WebRequest -Uri $url -OutFile "BinMod.exe" -UseBasicParsing
+                  Write-Host "BinMod.exe downloaded (for post-processing)"
+                  break
+              } catch {
+                  # Continue to next URL
+              }
+          }
+          
+          if (!(Test-Path "BinMod.exe")) {
+              Write-Host "Warning: Could not download BinMod.exe (optional)"
+          }
+          
+          Write-Host "[OK] AutoHotkey compiler setup complete"
+          Write-Host "Files in current directory:"
+          Get-ChildItem -Name | ForEach-Object { Write-Host "  - $_" }
         shell: powershell
+        
+      - name: Update version in script
         run: |
-          $ref = "$env:GITHUB_REF"  # refs/tags/vX.Y.Z
-          if ($ref -match 'refs/tags/(.+)$') { $version = $matches[1] } else { $version = "v0.0.0" }
-          $plain = $version.TrimStart('v')
+          $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "v${{ github.event.inputs.version }}"
+          } else {
+            "${{ github.ref_name }}"
+          }
+          
+          # Update version in AEMultibox.ahk
+          $content = Get-Content "AEMultibox.ahk" -Raw
+          $content = $content -replace '; Version: .*', "; Version: $version"
+          $content = $content -replace 'global APP_VERSION := ".*"', "global APP_VERSION := `"$version`""
+          Set-Content "AEMultibox.ahk" $content
+          
+          # Create version.txt for auto-updater
           Set-Content "version.txt" $version
-          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "VERSION_PLAIN=$plain" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "`u2713 Version resolved: $version"
-
+          
+          Write-Host "Updated to version: $version"
+        shell: powershell
+        
       - name: Compile to executable
-        shell: powershell
         run: |
-          .\Ahk2Exe\Ahk2Exe.exe /in AEMultibox.ahk /out AEMultibox.exe /base AutoHotkeyU64.exe /compress 1
-          if (!(Test-Path "AEMultibox.exe")) { Write-Error "Compilation failed"; exit 1 }
-          $size = (Get-Item "AEMultibox.exe").Length / 1MB
-          Write-Host "`u2713 Compiled AEMultibox.exe ($([math]::Round($size,2)) MB)"
-
-      - name: Create distribution folder
+          # Compile the script using Ahk2Exe with AutoHotkey v2 base
+          Write-Host "Starting compilation..."
+          
+          # Check if Ahk2Exe.exe exists
+          if (!(Test-Path "Ahk2Exe.exe")) {
+              Write-Error "Ahk2Exe.exe not found in current directory"
+              Write-Host "Files in current directory:"
+              Get-ChildItem -Name | ForEach-Object { Write-Host "  - $_" }
+              exit 1
+          }
+          
+          Write-Host "Found Ahk2Exe.exe, proceeding with compilation..."
+          
+          # Check if icon file exists
+          $iconParam = ""
+          if (Test-Path "AEMultibox.ico") {
+              Write-Host "Found AEMultibox.ico - will use as executable icon"
+              $iconParam = "/icon"
+          } else {
+              Write-Host "AEMultibox.ico not found - using default icon"
+          }
+          
+          # Run the compiler with the v2 base file and icon (if available)
+          if ($iconParam) {
+              $process = Start-Process -FilePath ".\Ahk2Exe.exe" `
+                  -ArgumentList "/in", "AEMultibox.ahk", "/out", "AEMultibox.exe", "/base", "AutoHotkey64.exe", "/icon", "AEMultibox.ico" `
+                  -Wait -PassThru -NoNewWindow `
+                  -RedirectStandardOutput "compile_output.txt" `
+                  -RedirectStandardError "compile_error.txt"
+          } else {
+              $process = Start-Process -FilePath ".\Ahk2Exe.exe" `
+                  -ArgumentList "/in", "AEMultibox.ahk", "/out", "AEMultibox.exe", "/base", "AutoHotkey64.exe" `
+                  -Wait -PassThru -NoNewWindow `
+                  -RedirectStandardOutput "compile_output.txt" `
+                  -RedirectStandardError "compile_error.txt"
+          }
+          
+          # Read output for debugging
+          if (Test-Path "compile_output.txt") {
+              $output = Get-Content "compile_output.txt" -Raw
+              if ($output) {
+                  Write-Host "Compiler output: $output"
+              }
+          }
+          
+          if (Test-Path "compile_error.txt") {
+              $errorOutput = Get-Content "compile_error.txt" -Raw
+              if ($errorOutput) {
+                  Write-Host "Compiler messages: $errorOutput"
+              }
+          }
+          
+          # Check if the exe was actually created (this is the real test)
+          if (!(Test-Path "AEMultibox.exe")) {
+              Write-Error "Compilation failed - AEMultibox.exe was not created"
+              exit 1
+          }
+          
+          # Verify it's a valid executable
+          $size = (Get-Item "AEMultibox.exe").Length
+          if ($size -eq 0) {
+              Write-Error "Compilation failed - AEMultibox.exe is empty"
+              exit 1
+          }
+          
+          $sizeMB = $size / 1MB
+          Write-Host "[OK] Successfully compiled AEMultibox.exe (Size: $([math]::Round($sizeMB, 2)) MB)"
+          if (Test-Path "AEMultibox.ico") {
+              Write-Host "[OK] Icon embedded: AEMultibox.ico"
+          }
+          
+          # Clean up temp files
+          Remove-Item "compile_output.txt" -ErrorAction SilentlyContinue
+          Remove-Item "compile_error.txt" -ErrorAction SilentlyContinue
         shell: powershell
+        
+      - name: Create distribution package
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item AEMultibox.exe .\dist\
-          Copy-Item AEMultibox.ahk .\dist\
-          Copy-Item version.txt .\dist\
-          if (Test-Path .\aeboost\aeboost) { Copy-Item .\aeboost\aeboost .\dist\ -Recurse; Write-Host "`u2713 Included aeboost folder" }
-          @"
-          # AEMultibox
-
-          How to Run:
-          1. Extract the zip
-          2. Run AEMultibox.exe (or AEMultibox.ahk with AutoHotkey v2 installed)
-
-          Files:
-          - AEMultibox.exe
-          - AEMultibox.ahk
-          - version.txt
-          - (optional) aeboost folder
-          "@ | Set-Content .\dist\README.txt -Encoding UTF8
-          Write-Host "`u2713 Distribution folder prepared"
-
-      - name: Zip distribution (single asset)
+          # Create dist directory
+          New-Item -ItemType Directory -Force -Path "dist"
+          
+          # Copy main files
+          Copy-Item "AEMultibox.exe" "dist/"
+          Copy-Item "AEMultibox.ahk" "dist/"
+          Copy-Item "version.txt" "dist/"
+          Copy-Item "README.md" "dist/"
+          
+          # Copy AEBoost files - IMPORTANT: Include AEBoost.exe
+          if (Test-Path "AEBoost") {
+              Write-Host "AEBoost folder found, copying contents..."
+              New-Item -ItemType Directory -Force -Path "dist/AEBoost"
+              
+              # Copy all AEBoost files
+              Copy-Item "AEBoost/*" "dist/AEBoost/" -Recurse -Force
+              
+              # Verify AEBoost.exe was copied
+              if (Test-Path "dist/AEBoost/AEBoost.exe") {
+                  Write-Host "[OK] AEBoost.exe included successfully"
+                  $aeboostSize = (Get-Item "dist/AEBoost/AEBoost.exe").Length / 1KB
+                  Write-Host "    AEBoost.exe size: $([math]::Round($aeboostSize, 2)) KB"
+              } else {
+                  Write-Warning "AEBoost.exe not found in AEBoost folder"
+              }
+              
+              # List all files in AEBoost folder for verification
+              Write-Host "AEBoost folder contents:"
+              Get-ChildItem "dist/AEBoost" -Name | ForEach-Object { Write-Host "    - $_" }
+          } else {
+              Write-Warning "AEBoost folder not found in repository"
+              Write-Host "Make sure AEBoost folder with AEBoost.exe is committed to the repository"
+          }
+          
+          # Create auto-updater script if it exists
+          if (Test-Path "updater.ahk") {
+              Copy-Item "updater.ahk" "dist/"
+              Write-Host "[OK] Included updater script"
+          }
+          
+          # Create checksums for all executables
+          $checksumContent = @()
+          
+          # Add main exe checksum
+          $mainHash = Get-FileHash "dist/AEMultibox.exe" -Algorithm SHA256
+          $checksumContent += "File: AEMultibox.exe"
+          $checksumContent += "SHA256: $($mainHash.Hash)"
+          $checksumContent += ""
+          
+          # Add AEBoost.exe checksum if it exists
+          if (Test-Path "dist/AEBoost/AEBoost.exe") {
+              $aeboostHash = Get-FileHash "dist/AEBoost/AEBoost.exe" -Algorithm SHA256
+              $checksumContent += "File: AEBoost/AEBoost.exe"
+              $checksumContent += "SHA256: $($aeboostHash.Hash)"
+              $checksumContent += ""
+          }
+          
+          $checksumContent -join "`n" | Set-Content "dist/checksums.txt"
+          
+          # Create README for AEBoost integration if it doesn't exist
+          if (Test-Path "dist/AEBoost/AEBoost.exe") {
+              if (!(Test-Path "dist/AEBoost/README.txt")) {
+                  $aeboostReadme = @"
+          AEBoost Integration
+          ===================
+          AEBoost.exe is included with permission from the original author.
+          
+          To use AEBoost with AEMultibox:
+          1. Ensure AEBoost.exe is in the AEBoost subfolder
+          2. Configure AEBoost settings in AEMultibox
+          3. AEMultibox will automatically launch and manage AEBoost
+          
+          Note: AEBoost must be in the 'AEBoost' subfolder relative to AEMultibox.exe
+          "@
+                  Set-Content "dist/AEBoost/README.txt" $aeboostReadme
+              }
+          }
+          
+          # Zip the distribution
+          Compress-Archive -Path "dist/*" -DestinationPath "AEMultibox-dist.zip" -Force
+          
+          # Show final package contents
+          Write-Host ""
+          Write-Host "Distribution package created with the following structure:"
+          Write-Host "AEMultibox-dist.zip"
+          Write-Host "  - AEMultibox.exe"
+          Write-Host "  - AEMultibox.ahk"
+          Write-Host "  - version.txt"
+          Write-Host "  - checksums.txt"
+          Write-Host "  - README.md"
+          if (Test-Path "dist/AEBoost/AEBoost.exe") {
+              Write-Host "  - AEBoost/"
+              Write-Host "      - AEBoost.exe"
+              $aeboostFiles = Get-ChildItem "dist/AEBoost" -Name | Where-Object { $_ -ne "AEBoost.exe" }
+              foreach ($file in $aeboostFiles) {
+                  Write-Host "      - $file"
+              }
+          }
+          
+          Write-Host ""
+          Write-Host "[OK] Distribution package created successfully"
         shell: powershell
-        run: |
-          $zipName = "AEMultibox-$env:VERSION.zip"
-          if (Test-Path $zipName) { Remove-Item $zipName -Force }
-          Compress-Archive -Path .\dist\* -DestinationPath $zipName
-          if (!(Test-Path $zipName)) { Write-Error "Zip creation failed"; exit 1 }
-          "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "`u2713 Created $zipName"
-
-      - name: Generate latest.json for updater
-        shell: powershell
-        run: |
-          $artifactName = $env:ZIP_NAME
-          $version = $env:VERSION
-          $json = [ordered]@{
-            version = $version
-            download = "https://github.com/${{ github.repository }}/releases/download/$version/$artifactName"
-          } | ConvertTo-Json
-          $json | Set-Content latest.json -Encoding UTF8
-          Write-Host "`u2713 Wrote latest.json"
-
-      - name: Upload artifact (optional CI browsing)
+        
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIP_NAME }}
-          path: ${{ env.ZIP_NAME }}
+          name: AEMultibox-build
+          path: |
+            dist/
+            AEMultibox-dist.zip
+          retention-days: 90
 
-      - name: Create GitHub Release (single zip + latest.json)
-        uses: softprops/action-gh-release@v2
+  release:
+    name: Create Release
+    needs: build
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
         with:
+          name: AEMultibox-build
+          
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "v${{ github.event.inputs.version }}"
+          } else {
+            "${{ github.ref_name }}"
+          }
+          
+          # Check if AEBoost is included
+          $aeboostIncluded = Test-Path "dist/AEBoost/AEBoost.exe"
+          
+          $notes = @"
+          # AEMultibox $version
+          
+          ## 📦 Installation
+          1. Download ``AEMultibox-$version.zip``
+          2. Extract to your desired location
+          3. Run ``AEMultibox.exe`` (or ``AEMultibox.ahk`` if you have AutoHotkey v2 installed)
+          
+          ## 🚀 AEBoost Integration
+          $(if ($aeboostIncluded) { "✅ **AEBoost.exe is included** in the AEBoost subfolder (with permission from the original author)" } else { "⚠️ AEBoost.exe not included - add it manually to the AEBoost subfolder if needed" })
+          
+          ## 🔄 Auto-Update
+          The application will automatically check for updates on startup. You can also manually check via the Settings tab.
+          
+          ## ✨ What's New
+          - See [Changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details
+          
+          ## 📝 Files Included
+          - ``AEMultibox.exe`` - Main application executable
+          - ``AEMultibox.ahk`` - Source script (requires AutoHotkey v2)
+          $(if ($aeboostIncluded) { "- ``AEBoost/AEBoost.exe`` - AEBoost integration (included with permission)" })
+          - ``updater.ahk`` - Auto-updater component (if available)
+          - ``version.txt`` - Version information
+          - ``checksums.txt`` - File integrity verification (includes checksums for all executables)
+          - ``README.md`` - Documentation
+          
+          ## ⚠️ Requirements
+          - Windows 10/11
+          - Ashen Empires game client
+          - Administrator privileges recommended for memory reading and AEBoost integration
+          
+          ## 🛡️ Security
+          - SHA256 checksums provided in ``checksums.txt`` for all executables
+          - All releases are automatically built via GitHub Actions
+          - AEBoost.exe included with explicit permission from the original author
+          "@
+          
+          # Save to file for release
+          Set-Content "release_notes.md" $notes
+          
+          # Output for GitHub
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+        shell: powershell
+        
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.release_notes.outputs.version }}
+          name: AEMultibox ${{ steps.release_notes.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
           files: |
-            ${{ env.ZIP_NAME }}
-            latest.json
+            AEMultibox-dist.zip
+            dist/AEMultibox.exe
+            dist/AEMultibox.ahk
+            dist/version.txt
+            dist/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Update latest release pointer
+        run: |
+          # Create latest.json for auto-updater
+          $version = "${{ steps.release_notes.outputs.version }}"
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$version/AEMultibox.exe"
+          
+          $latest = @{
+            version = $version
+            download_url = $downloadUrl
+            release_date = Get-Date -Format "yyyy-MM-dd"
+            checksum = (Get-FileHash "dist/AEMultibox.exe" -Algorithm SHA256).Hash
+          } | ConvertTo-Json
+          
+          Set-Content "latest.json" $latest
+          
+          Write-Host "[OK] Created latest.json for auto-updater"
+        shell: powershell
+        
+      - name: Upload latest.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-version-info
+          path: latest.json
+
+  notify:
+    name: Notify Success
+    needs: [test, build, release]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check status
+        run: |
+          if [ "${{ needs.test.result }}" == "success" ] && \
+             [ "${{ needs.build.result }}" == "success" ] && \
+             [ "${{ needs.release.result }}" == "success" ]; then
+            echo "[SUCCESS] Release pipeline completed successfully!"
+            echo "Version released: ${{ github.ref_name }}"
+          else
+            echo "[FAILED] Release pipeline failed"
+            echo "Test: ${{ needs.test.result }}"
+            echo "Build: ${{ needs.build.result }}"
+            echo "Release: ${{ needs.release.result }}"
+            exit 1
+          fi
