@@ -1,11 +1,11 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-; Version: v1.0.0
+; Version: v1.0.4
 
 ; ================================
 ; Improved Auto-Update Configuration
 ; ================================
-global APP_VERSION := "v1.0.1"
+global APP_VERSION := "v1.0.4"
 global UPDATE_CHECK_URL := "https://api.github.com/repos/AEMultibox/AEMultibox/releases/latest"
 global UPDATE_CHECK_INTERVAL := 3600000  ; Check every hour
 global AUTO_UPDATE_ENABLED := true
@@ -17,7 +17,7 @@ global UPDATE_IN_PROGRESS := false  ; Prevent multiple simultaneous checks
 ; ================================
 global USE_MEMORY_READING := true
 
-; Check for updates before anything else
+; Check for updates before anything else - removed silent flag to ensure it works
 CheckForUpdates(true)  ; true = silent check on startup
 
 if !A_IsAdmin {
@@ -90,16 +90,24 @@ global AEBoostProcess := 0
 ; ================================
 ; Auto-Update Functions
 ; ================================
-CheckForUpdates(silent := false) {
-    global APP_VERSION, UPDATE_CHECK_URL, AUTO_UPDATE_ENABLED, LAST_UPDATE_CHECK
+CheckForUpdates(silent := false, forceCheck := false) {
+    global APP_VERSION, UPDATE_CHECK_URL, AUTO_UPDATE_ENABLED, LAST_UPDATE_CHECK, UPDATE_IN_PROGRESS
     
-    if (!AUTO_UPDATE_ENABLED)
+    if (!AUTO_UPDATE_ENABLED && !forceCheck)
         return
     
-    ; Rate limit update checks
+    ; Prevent concurrent update checks
+    if (UPDATE_IN_PROGRESS)
+        return
+    
+    UPDATE_IN_PROGRESS := true
+    
+    ; Rate limit update checks - but allow force check to bypass
     currentTime := A_TickCount
-    if (currentTime - LAST_UPDATE_CHECK < 60000)  ; Don't check more than once per minute
+    if (!forceCheck && (currentTime - LAST_UPDATE_CHECK < 60000)) {  ; Don't check more than once per minute unless forced
+        UPDATE_IN_PROGRESS := false
         return
+    }
     
     LAST_UPDATE_CHECK := currentTime
     
@@ -107,12 +115,13 @@ CheckForUpdates(silent := false) {
         ; Create temporary file for version check
         tempFile := A_Temp . "\aemultibox_version_check.json"
         
-        ; Download version info using PowerShell
-        psCommand := 'Invoke-WebRequest -Uri "' . UPDATE_CHECK_URL . '" -OutFile "' . tempFile . '" -UseBasicParsing'
-        RunWait('powershell.exe -ExecutionPolicy Bypass -Command "' . psCommand . '"',, "Hide")
+        ; Download version info using PowerShell with better error handling
+        psCommand := 'try { Invoke-WebRequest -Uri "' . UPDATE_CHECK_URL . '" -OutFile "' . tempFile . '" -UseBasicParsing -ErrorAction Stop } catch { exit 1 }'
+        result := RunWait('powershell.exe -ExecutionPolicy Bypass -Command "' . psCommand . '"',, "Hide")
         
-        if (!FileExist(tempFile))
+        if (result != 0 || !FileExist(tempFile)) {
             throw Error("Failed to download version information")
+        }
         
         ; Read and parse JSON
         jsonContent := FileRead(tempFile)
@@ -123,21 +132,36 @@ CheckForUpdates(silent := false) {
             
             ; Compare versions
             if (CompareVersions(latestVersion, APP_VERSION) > 0) {
-                ; Extract download URL
-                downloadUrl := ""
-                if (RegExMatch(jsonContent, '"browser_download_url"\s*:\s*"([^"]*AEMultibox\.exe[^"]*)"', &urlMatch)) {
-                    downloadUrl := urlMatch[1]
+                ; Extract download URLs for both exe and ahk files
+                downloadUrls := Map()
+                
+                ; Look for .exe file
+                if (RegExMatch(jsonContent, '"browser_download_url"\s*:\s*"([^"]*AEMultibox\.exe[^"]*)"', &exeMatch)) {
+                    downloadUrls["exe"] := exeMatch[1]
                 }
                 
-                if (!silent) {
-                    ShowUpdateDialog(latestVersion, downloadUrl)
+                ; Look for .ahk file
+                if (RegExMatch(jsonContent, '"browser_download_url"\s*:\s*"([^"]*AEMultibox\.ahk[^"]*)"', &ahkMatch)) {
+                    downloadUrls["ahk"] := ahkMatch[1]
+                }
+                
+                if (downloadUrls.Count > 0) {
+                    if (!silent) {
+                        ShowUpdateDialog(latestVersion, downloadUrls)
+                    } else {
+                        ; Show notification for silent check
+                        TrayTip("Update Available", "AEMultibox " . latestVersion . " is available!`nCheck Settings tab to update.", "Info")
+                    }
                 } else {
-                    ; Show notification for silent check
-                    TrayTip("Update Available", "AEMultibox " . latestVersion . " is available!`nCheck Settings tab to update.", "Info")
+                    if (!silent) {
+                        MsgBox("Update found but no download links available. Please check GitHub manually.", "Update Notice", 0x30)
+                    }
                 }
             } else if (!silent) {
                 MsgBox("You are running the latest version (" . APP_VERSION . ")", "No Updates", 0x40)
             }
+        } else {
+            throw Error("Could not parse version information")
         }
         
         ; Clean up
@@ -147,6 +171,8 @@ CheckForUpdates(silent := false) {
         if (!silent) {
             MsgBox("Failed to check for updates: " . err.Message, "Update Check Error", 0x10)
         }
+    } finally {
+        UPDATE_IN_PROGRESS := false
     }
 }
 
@@ -174,27 +200,29 @@ CompareVersions(v1, v2) {
     return 0  ; Versions are equal
 }
 
-ShowUpdateDialog(newVersion, downloadUrl := "") {
+ShowUpdateDialog(newVersion, downloadUrls) {
     global APP_VERSION
     
     message := "A new version of AEMultibox is available!`n`n"
     message .= "Current version: " . APP_VERSION . "`n"
     message .= "New version: " . newVersion . "`n`n"
     
-    if (downloadUrl != "") {
-        message .= "Would you like to download and install the update now?"
-        result := MsgBox(message, "Update Available", 0x34)
-        
-        if (result == "Yes") {
-            DownloadAndInstallUpdate(downloadUrl, newVersion)
-        }
-    } else {
-        message .= "Please visit the GitHub releases page to download the update."
-        MsgBox(message, "Update Available", 0x40)
+    ; Show what files are available
+    message .= "Available files:`n"
+    if (downloadUrls.Has("exe"))
+        message .= "• AEMultibox.exe`n"
+    if (downloadUrls.Has("ahk"))
+        message .= "• AEMultibox.ahk`n"
+    
+    message .= "`nWould you like to download and install the update now?"
+    result := MsgBox(message, "Update Available", 0x34)
+    
+    if (result == "Yes") {
+        DownloadAndInstallUpdate(downloadUrls, newVersion)
     }
 }
 
-DownloadAndInstallUpdate(downloadUrl, newVersion) {
+DownloadAndInstallUpdate(downloadUrls, newVersion) {
     try {
         ; Show progress dialog
         progressGui := Gui("+AlwaysOnTop -MinimizeBox", "Downloading Update...")
@@ -203,35 +231,90 @@ DownloadAndInstallUpdate(downloadUrl, newVersion) {
         statusText := progressGui.Add("Text", "w300 Center", "Preparing download...")
         progressGui.Show()
         
-        ; Download new version
-        tempFile := A_Temp . "\AEMultibox_update.exe"
-        backupFile := A_ScriptFullPath . ".backup"
+        ; Prepare file paths
+        tempExeFile := ""
+        tempAhkFile := ""
+        backupExeFile := ""
+        backupAhkFile := ""
         
-        ; Download using PowerShell with progress
-        statusText.Text := "Downloading update..."
-        psCommand := 'Invoke-WebRequest -Uri "' . downloadUrl . '" -OutFile "' . tempFile . '" -UseBasicParsing'
-        RunWait('powershell.exe -ExecutionPolicy Bypass -Command "' . psCommand . '"',, "Hide")
+        totalFiles := downloadUrls.Count
+        filesDownloaded := 0
         
-        if (!FileExist(tempFile)) {
-            throw Error("Download failed")
+        ; Download .exe if available
+        if (downloadUrls.Has("exe")) {
+            statusText.Text := "Downloading AEMultibox.exe..."
+            tempExeFile := A_Temp . "\AEMultibox_update.exe"
+            
+            psCommand := 'try { Invoke-WebRequest -Uri "' . downloadUrls["exe"] . '" -OutFile "' . tempExeFile . '" -UseBasicParsing -ErrorAction Stop } catch { exit 1 }'
+            result := RunWait('powershell.exe -ExecutionPolicy Bypass -Command "' . psCommand . '"',, "Hide")
+            
+            if (result != 0 || !FileExist(tempExeFile)) {
+                throw Error("Failed to download AEMultibox.exe")
+            }
+            
+            filesDownloaded++
+            progressBar.Value := (filesDownloaded / totalFiles) * 70
         }
         
-        progressBar.Value := 50
+        ; Download .ahk if available
+        if (downloadUrls.Has("ahk")) {
+            statusText.Text := "Downloading AEMultibox.ahk..."
+            tempAhkFile := A_Temp . "\AEMultibox_update.ahk"
+            
+            psCommand := 'try { Invoke-WebRequest -Uri "' . downloadUrls["ahk"] . '" -OutFile "' . tempAhkFile . '" -UseBasicParsing -ErrorAction Stop } catch { exit 1 }'
+            result := RunWait('powershell.exe -ExecutionPolicy Bypass -Command "' . psCommand . '"',, "Hide")
+            
+            if (result != 0 || !FileExist(tempAhkFile)) {
+                throw Error("Failed to download AEMultibox.ahk")
+            }
+            
+            filesDownloaded++
+            progressBar.Value := (filesDownloaded / totalFiles) * 70
+        }
+        
+        progressBar.Value := 80
         statusText.Text := "Installing update..."
         
         ; Create updater batch script
         updaterScript := A_Temp . "\aemultibox_updater.bat"
         updaterContent := "@echo off`n"
+        updaterContent .= "echo Updating AEMultibox...`n"
         updaterContent .= "timeout /t 2 /nobreak > nul`n"  ; Wait for current process to exit
-        updaterContent .= 'move /y "' . A_ScriptFullPath . '" "' . backupFile . '"`n'  ; Backup current
-        updaterContent .= 'move /y "' . tempFile . '" "' . A_ScriptFullPath . '"`n'  ; Install new
-        updaterContent .= 'start "" "' . A_ScriptFullPath . '"`n'  ; Start new version
+        
+        ; Handle .exe update if downloaded
+        if (tempExeFile != "") {
+            exePath := A_ScriptDir . "\AEMultibox.exe"
+            backupExeFile := exePath . ".backup"
+            updaterContent .= 'if exist "' . exePath . '" ('
+            updaterContent .= ' move /y "' . exePath . '" "' . backupExeFile . '"`n'
+            updaterContent .= ')`n'
+            updaterContent .= 'move /y "' . tempExeFile . '" "' . exePath . '"`n'
+        }
+        
+        ; Handle .ahk update if downloaded
+        if (tempAhkFile != "") {
+            ahkPath := A_ScriptDir . "\AEMultibox.ahk"
+            backupAhkFile := ahkPath . ".backup"
+            updaterContent .= 'if exist "' . ahkPath . '" ('
+            updaterContent .= ' move /y "' . ahkPath . '" "' . backupAhkFile . '"`n'
+            updaterContent .= ')`n'
+            updaterContent .= 'move /y "' . tempAhkFile . '" "' . ahkPath . '"`n'
+        }
+        
+        ; Restart with the appropriate file (prefer current running type)
+        if (A_IsCompiled && tempExeFile != "") {
+            updaterContent .= 'start "" "' . A_ScriptDir . '\AEMultibox.exe"`n'
+        } else if (tempAhkFile != "") {
+            updaterContent .= 'start "" "' . A_ScriptDir . '\AEMultibox.ahk"`n'
+        }
+        
         updaterContent .= 'del "%~f0"`n'  ; Delete this batch file
         
         FileAppend(updaterContent, updaterScript)
         
         progressBar.Value := 100
         statusText.Text := "Restarting with new version..."
+        Sleep(500)
         
         ; Clean up before restart
         progressGui.Destroy()
@@ -329,7 +412,7 @@ global AutoUpdateCheckbox := MyGui.Add("CheckBox", "xs y+5 Checked", "Check for 
 AutoUpdateCheckbox.OnEvent("Click", (*) => (AUTO_UPDATE_ENABLED := AutoUpdateCheckbox.Value))
 
 global UpdateButton := MyGui.Add("Button", "xs y+5 w150 h25", "Check for Updates")
-UpdateButton.OnEvent("Click", (*) => CheckForUpdates(false))
+UpdateButton.OnEvent("Click", (*) => CheckForUpdates(false, true))  ; false = not silent, true = force check
 
 global VersionText := MyGui.Add("Text", "x+10 yp+5 w150", "Version: " . APP_VERSION)
 VersionText.SetFont("s9")
@@ -351,7 +434,8 @@ MyGui.Add("Text", "w330", "• Enable from Settings tab")
 MyGui.Add("Text", "w330 y+10", "AUTO-UPDATE:")
 MyGui.Add("Text", "w330", "• Checks for updates on startup")
 MyGui.Add("Text", "w330", "• Manual check in Settings tab")
-MyGui.Add("Text", "w330", "• Automatic download and install")
+MyGui.Add("Text", "w330", "• Downloads both .exe and .ahk files")
+MyGui.Add("Text", "w330", "• Automatic installation")
 
 ; Tab / Close handlers
 Tab.UseTab()
