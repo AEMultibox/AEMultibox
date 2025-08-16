@@ -1,6 +1,6 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-; Version: v1.0.0
+; Version: v1.0.3
 
 ; ================================
 ; Improved Auto-Update Configuration
