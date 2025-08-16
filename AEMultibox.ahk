@@ -53,9 +53,9 @@ global Window1Class := "Sandbox:Ashen_empires:WindowsClass"
 global Window2Class := "WindowsClass"
 
 ; memory addresses
-global GlobalManagerAddress := 0x744074
+global GlobalManagerAddress := 0x747F14
 global CombatModeOffset := 0x2A8
-global ChatBaseOffset := 0x323084
+global ChatBaseOffset := 0x326F84
 global ChatFinalOffset := 0x6AC
 
 ; state
