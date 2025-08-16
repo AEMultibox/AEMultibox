@@ -3,13 +3,14 @@
 ; Version: v1.0.0
 
 ; ================================
-; Auto-Update Configuration
+; Improved Auto-Update Configuration
 ; ================================
 global APP_VERSION := "v1.0.1"
 global UPDATE_CHECK_URL := "https://api.github.com/repos/AEMultibox/AEMultibox/releases/latest"
-global UPDATE_CHECK_INTERVAL := 3600000  ; Check every hour (in milliseconds)
+global UPDATE_CHECK_INTERVAL := 3600000  ; Check every hour
 global AUTO_UPDATE_ENABLED := true
 global LAST_UPDATE_CHECK := 0
+global UPDATE_IN_PROGRESS := false  ; Prevent multiple simultaneous checks
 
 ; ================================
 ; Admin / startup
@@ -380,9 +381,9 @@ OnTabChange(*) {
     ; Per-tab window heights
     targetHeight := 310           ; Main (tab 1) - tighter
     if (currentTab == 2)
-        targetHeight := 510       ; Settings (tab 2) - tallest for AEBoost and Update sections
+        targetHeight := 550       ; Settings (tab 2) - tallest for AEBoost and Update sections
     else if (currentTab == 3)
-        targetHeight := 490       ; Info (tab 3) - more room for hotkeys and update info
+        targetHeight := 520       ; Info (tab 3) - more room for hotkeys and update info
     MyGui.GetPos(&x, &y, &w, &h)
     if (h != targetHeight)
         MyGui.Move(, , , targetHeight)
