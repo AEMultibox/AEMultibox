@@ -111,9 +111,9 @@ YourScript/
 ## Technical Details
 
 ### Memory Addresses
-- **Global Manager**: `0x744074`
+- **Global Manager**: `0x747F14`
 - **Combat Mode Offset**: `0x2A8`
-- **Chat Base Offset**: `0x323084`
+- **Chat Base Offset**: `0x326F84`
 - **Chat Final Offset**: `0x6AC`
 
 ### Window Classes
