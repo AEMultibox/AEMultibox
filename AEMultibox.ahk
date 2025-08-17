@@ -1,11 +1,11 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-; Version: v1.0.4
+; Version: v1.0.5
 
 ; ================================
 ; Improved Auto-Update Configuration
 ; ================================
-global APP_VERSION := "v1.0.4"
+global APP_VERSION := "v1.0.5"
 global UPDATE_CHECK_URL := "https://api.github.com/repos/AEMultibox/AEMultibox/releases/latest"
 global UPDATE_CHECK_INTERVAL := 3600000  ; Check every hour
 global AUTO_UPDATE_ENABLED := true
